@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <optional>
 #include <string>
 #include <vector>
@@ -23,6 +24,18 @@
 using namespace minisql;
 
 namespace {
+
+// Iteration counts are multiplied by MINISQL_FUZZ_SCALE percent (default
+// 100). Sanitizer builds run 10-50x slower, so scripts/run_sanitizers.sh
+// lowers it; the inputs checked are a prefix of the full run's inputs.
+int scaled(int n) {
+    static const int percent = [] {
+        const char* env = std::getenv("MINISQL_FUZZ_SCALE");
+        const int v = env ? std::atoi(env) : 100;
+        return v > 0 ? v : 100;
+    }();
+    return std::max(1, static_cast<int>(static_cast<long long>(n) * percent / 100));
+}
 
 // splitmix64: same output on every platform and standard library.
 struct Rng {
@@ -104,7 +117,7 @@ TEST(random_token_soup_never_crashes) {
     Rng rng{1};
     Engine e = sampleEngine();
     e.createIndex("users", "city");
-    for (int i = 0; i < 20000; ++i) {
+    for (int i = 0; i < scaled(20000); ++i) {
         const std::string sql = randomSql(rng);
         mustSucceedOrThrowError([&] { (void)e.run(sql); }, sql);
     }
@@ -120,7 +133,7 @@ TEST(mutated_valid_queries_never_crash) {
     Rng rng{2};
     Engine e = sampleEngine();
     e.createIndex("users", "id");
-    for (int i = 0; i < 20000; ++i) {
+    for (int i = 0; i < scaled(20000); ++i) {
         const std::string sql = mutate(rng, rng.pick(seeds));
         mustSucceedOrThrowError([&] { (void)e.run(sql); }, sql);
     }
@@ -129,7 +142,7 @@ TEST(mutated_valid_queries_never_crash) {
 TEST(error_positions_stay_inside_the_query) {
     Rng rng{3};
     Engine e = sampleEngine();
-    for (int i = 0; i < 5000; ++i) {
+    for (int i = 0; i < scaled(5000); ++i) {
         const std::string sql = randomSql(rng);
         try {
             (void)e.run(sql);
@@ -147,7 +160,7 @@ TEST(mutated_csv_never_crashes) {
         "3,\"say \"\"hi\"\"\",45,\"multi\nline\"\n4,,29,\n";
     const std::vector<Column> schema = parseColumnSpec("id:INT64,name:TEXT,age:INT64,city:TEXT");
     Rng rng{4};
-    for (int i = 0; i < 20000; ++i) {
+    for (int i = 0; i < scaled(20000); ++i) {
         const std::string csv = mutate(rng, base);
         mustSucceedOrThrowError(
             [&] {
@@ -166,7 +179,7 @@ TEST(mutated_schema_json_never_crashes) {
     const std::string base =
         R"({"table": "users", "columns": [{"name": "id", "type": "INT64"}, {"name": "city", "type": "TEXT"}]})";
     Rng rng{5};
-    for (int i = 0; i < 20000; ++i) {
+    for (int i = 0; i < scaled(20000); ++i) {
         const std::string json = mutate(rng, base);
         mustSucceedOrThrowError([&] { (void)parseSchemaJson(json); }, json);
     }
@@ -323,22 +336,22 @@ void runDifferential(Engine& e, std::uint64_t seed, int queries) {
 
 TEST(differential_sample_data_no_index) {
     Engine e = sampleEngine();
-    runDifferential(e, 10, 3000);
+    runDifferential(e, 10, scaled(3000));
 }
 
 TEST(differential_sample_data_all_indexed) {
     Engine e = sampleEngine();
     for (const char* c : {"id", "name", "age", "city"}) e.createIndex("users", c);
-    runDifferential(e, 10, 3000);  // same queries as the unindexed run
+    runDifferential(e, 10, scaled(3000));  // same queries as the unindexed run
 }
 
 TEST(differential_generated_data_with_indexes) {
     Engine e;
     e.addTable(generateUsers("users", 3000, 99));
-    runDifferential(e, 11, 300);
+    runDifferential(e, 11, scaled(300));
     e.createIndex("users", "age");
     e.createIndex("users", "city");
-    runDifferential(e, 11, 300);
+    runDifferential(e, 11, scaled(300));
 }
 
 MINISQL_TEST_MAIN()

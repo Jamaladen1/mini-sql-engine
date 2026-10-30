@@ -9,5 +9,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DMINISQL_SANITIZE=ON -DMINISQL_WERROR=ON
 cmake --build build-asan -j"$(getconf _NPROCESSORS_ONLN)"
+# Randomized tests run 20% of their normal iterations under sanitizers.
+MINISQL_FUZZ_SCALE="${MINISQL_FUZZ_SCALE:-20}" \
 ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 UBSAN_OPTIONS=print_stacktrace=1 \
   ctest --test-dir build-asan --output-on-failure

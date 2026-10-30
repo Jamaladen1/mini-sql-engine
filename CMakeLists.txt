@@ -19,7 +19,9 @@ if(MINISQL_WERROR)
 endif()
 
 if(MINISQL_SANITIZE)
-  add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all)
+  # -O1 keeps sanitized tests fast enough to run in CI (ASan's own advice);
+  # -O0 made the randomized tests take tens of minutes.
+  add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all -O1)
   add_link_options(-fsanitize=address,undefined)
 endif()
 
