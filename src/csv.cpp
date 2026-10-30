@@ -100,11 +100,14 @@ struct Json {
     enum class Kind { Null, Bool, Number, String, Array, Object } kind = Kind::Null;
     std::string str;
     std::vector<Json> arr;
-    std::vector<std::pair<std::string, Json>> obj;
+    // Object members as parallel arrays: std::vector allows an incomplete
+    // element type, std::pair does not.
+    std::vector<std::string> keys;
+    std::vector<Json> values;
 
     const Json* get(const std::string& key) const {
-        for (const auto& [k, v] : obj) {
-            if (k == key) return &v;
+        for (std::size_t i = 0; i < keys.size(); ++i) {
+            if (keys[i] == key) return &values[i];
         }
         return nullptr;
     }
@@ -154,7 +157,9 @@ private:
                 skipWs();
                 std::string key = parseString();
                 expect(':');
-                v.obj.emplace_back(std::move(key), parseValue(depth + 1));
+                Json member = parseValue(depth + 1);
+                v.keys.push_back(std::move(key));
+                v.values.push_back(std::move(member));
                 skipWs();
                 if (i_ < s_.size() && s_[i_] == ',') { ++i_; continue; }
                 expect('}');
