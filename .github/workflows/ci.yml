@@ -1,0 +1,37 @@
+name: CI
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        compiler: [g++, clang++]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DMINISQL_WERROR=ON -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
+      - name: Build
+        run: cmake --build build -j
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: Benchmark (short)
+        run: ./build/minisql_bench --rows 10000 --iterations 5
+
+  sanitizers:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: ASan + UBSan
+        run: scripts/run_sanitizers.sh
+
+  docker:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image (runs tests)
+        run: docker build -t minisql .
+      - name: Smoke test container
+        run: docker run --rm minisql minisql -e "load users data/users.csv --schema data/users.schema.json" -e "index users id" -e "EXPLAIN SELECT * FROM users WHERE id = 42" -e "SELECT * FROM users WHERE id = 3"

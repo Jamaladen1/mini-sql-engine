@@ -1,0 +1,9 @@
+{
+  "table": "users",
+  "columns": [
+    {"name": "id",   "type": "INT64"},
+    {"name": "name", "type": "TEXT"},
+    {"name": "age",  "type": "INT64"},
+    {"name": "city", "type": "TEXT"}
+  ]
+}
