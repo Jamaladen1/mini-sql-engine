@@ -28,8 +28,6 @@ jobs:
         run: cmake --build build -j
       - name: Test
         run: ctest --test-dir build --output-on-failure
-      - name: Benchmark (short)
-        run: ./build/minisql_bench --rows 10000 --iterations 5
 
   macos:
     runs-on: macos-latest
@@ -51,6 +49,30 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=undefined"
           cmake --build build-ubsan -j
           ctest --test-dir build-ubsan --output-on-failure
+
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DMINISQL_BUILD_TESTS=OFF
+          cmake --build build -j --target minisql_bench
+      # Exits nonzero if indexed and full-scan results ever differ.
+      - name: Run benchmark
+        run: ./build/minisql_bench --rows 10000,100000 --iterations 25 --warmup 3 | tee benchmark.md
+      - name: Add results to the job summary
+        run: |
+          {
+            cat benchmark.md
+            echo
+            echo "_Shared GitHub runner (${{ runner.os }}, $(nproc) vCPU). Timings are noisy; compare runs, not absolute numbers._"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-${{ github.sha }}
+          path: benchmark.md
 
   sanitizers:
     runs-on: ubuntu-24.04
