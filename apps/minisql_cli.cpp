@@ -32,6 +32,7 @@ const char* kHelp =
     "  explain <SELECT ...>            show the execution plan (bare EXPLAIN also works)\n"
     "  tables                          list loaded tables\n"
     "  schema <table>                  show columns, types and indexes\n"
+    "  timing [on|off]                 show or hide query times (default on)\n"
     "  help                            show this help\n"
     "  quit | exit                     leave\n"
     "Lines starting with '#' or '--' are comments.\n"
@@ -174,6 +175,7 @@ private:
             if (cmd == "index" || cmd == "create-index") { index(splitArgs(rest)); return true; }
             if (cmd == "tables") { tables(); return true; }
             if (cmd == "schema") { schema(splitArgs(rest)); return true; }
+            if (cmd == "timing") { timing(lower(rest)); return true; }
             throw Error(ErrorKind::Syntax, "unknown command '" + cmd + "' (type 'help')");
         } catch (const Error& e) {
             failed_ = true;
@@ -193,8 +195,15 @@ private:
         } else {
             std::cout << renderResult(out.result);
         }
-        std::printf("Time: %.3f ms\n", out.elapsedMs);
+        if (timing_) std::printf("Time: %.3f ms\n", out.elapsedMs);
         std::fflush(stdout);
+    }
+
+    void timing(const std::string& arg) {
+        if (arg == "on") timing_ = true;
+        else if (arg == "off") timing_ = false;
+        else if (!arg.empty()) throw Error(ErrorKind::Syntax, "usage: timing [on|off]");
+        std::cout << "Timing is " << (timing_ ? "on" : "off") << "\n";
     }
 
     void load(const std::vector<std::string>& a) {
@@ -238,6 +247,7 @@ private:
 
     Engine engine_;
     bool failed_ = false;
+    bool timing_ = true;
     std::string pending_;  // unfinished multi-line SQL statement
 };
 
