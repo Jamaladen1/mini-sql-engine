@@ -7,6 +7,7 @@
 
 #include <cstdio>
 #include <fstream>
+#include <optional>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -16,6 +17,7 @@
 #include "minisql/csv.hpp"
 #include "minisql/engine.hpp"
 #include "minisql/error.hpp"
+#include "minisql/parser.hpp"
 
 namespace {
 
@@ -32,7 +34,9 @@ const char* kHelp =
     "  schema <table>                  show columns, types and indexes\n"
     "  help                            show this help\n"
     "  quit | exit                     leave\n"
-    "Lines starting with '#' or '--' are comments.\n";
+    "Lines starting with '#' or '--' are comments.\n"
+    "A query cut off mid-statement (e.g. 'SELECT id,') continues on the next\n"
+    "lines until one ends with ';'. A blank line ends it early.\n";
 
 std::string trim(const std::string& s) {
     const auto b = s.find_first_not_of(" \t\r\n");
@@ -72,9 +76,87 @@ public:
     // Returns false when the session should end.
     bool handle(const std::string& rawLine) {
         const std::string line = trim(rawLine);
-        if (line.empty() || line[0] == '#' || line.rfind("--", 0) == 0) return true;
+        const bool comment = !line.empty() && (line[0] == '#' || line.rfind("--", 0) == 0);
 
-        const auto sp = line.find_first_of(" \t");
+        if (!pending_.empty()) {
+            if (comment) return true;
+            if (line.empty()) {
+                // A blank line ends an unfinished statement; report why.
+                return dispatch(takePending());
+            }
+            pending_ += "\n" + line;
+            // A multi-line statement ends at ';' (outside a string literal),
+            // so a complete prefix like "SELECT * FROM t" can still be
+            // followed by a WHERE line.
+            if (line.back() == ';' && !hasOpenString(pending_)) return dispatch(takePending());
+            return true;
+        }
+
+        if (line.empty() || comment) return true;
+        if (isIncompleteSql(line)) {
+            pending_ = line;
+            return true;
+        }
+        return dispatch(line);
+    }
+
+    // Runs whatever is still buffered (called at end of input).
+    void finish() {
+        if (!pending_.empty()) dispatch(takePending());
+    }
+
+    bool continuing() const { return !pending_.empty(); }
+    bool failed() const { return failed_; }
+
+private:
+    std::string takePending() {
+        std::string s = std::move(pending_);
+        pending_.clear();
+        return s;
+    }
+
+    // Single quotes come in pairs ('' is an escaped quote), so an odd
+    // count means a string literal is still open.
+    static bool hasOpenString(const std::string& text) {
+        std::size_t quotes = 0;
+        for (char c : text) quotes += (c == '\'') ? 1 : 0;
+        return quotes % 2 == 1;
+    }
+
+    // Splits "<cmd> <rest>" and returns the SQL text a SQL command carries,
+    // or nullopt for non-SQL commands.
+    static std::optional<std::string> sqlOf(const std::string& line) {
+        const auto sp = line.find_first_of(" \t\n");
+        const std::string cmd = lower(line.substr(0, sp));
+        const std::string rest = sp == std::string::npos ? "" : trim(line.substr(sp + 1));
+        if (cmd == "select") return line;
+        if (cmd == "explain") return "EXPLAIN " + rest;
+        if (cmd == "query") return rest;
+        return std::nullopt;
+    }
+
+    // True when the SQL stops partway through a statement, so more input
+    // could complete it: the parser hit end of input, or a string literal
+    // is still open. Real errors (bad tokens, unknown tables) are not
+    // "incomplete" and are reported straight away.
+    static bool isIncompleteSql(const std::string& line) {
+        const auto sql = sqlOf(line);
+        if (!sql) return false;
+        const std::string text = trim(*sql);
+        if (text.empty()) return false;
+        try {
+            (void)parse(text);
+            return false;
+        } catch (const Error& e) {
+            if (e.kind() != ErrorKind::Syntax) return false;
+            if (e.position() && *e.position() >= text.size()) return true;
+            return std::string(e.what()).find("unterminated string literal") != std::string::npos;
+        }
+    }
+
+    bool dispatch(const std::string& line) {
+
+        const auto sp = line.find_first_of(" \t\n");
         const std::string cmd = lower(line.substr(0, sp));
         const std::string rest = sp == std::string::npos ? "" : trim(line.substr(sp + 1));
 
@@ -103,9 +185,6 @@ public:
         return true;
     }
 
-    bool failed() const { return failed_; }
-
-private:
     void runSql(const std::string& sql) {
         if (sql.empty()) throw Error(ErrorKind::Syntax, "missing SQL text");
         const QueryOutcome out = engine_.run(sql);
@@ -159,13 +238,19 @@ private:
 
     Engine engine_;
     bool failed_ = false;
+    std::string pending_;  // unfinished multi-line SQL statement
 };
 
 int runStream(Repl& repl, std::istream& in, bool interactive) {
     std::string line;
     while (true) {
-        if (interactive) { std::cout << "minisql> " << std::flush; }
-        if (!std::getline(in, line)) break;
+        if (interactive) {
+            std::cout << (repl.continuing() ? "   ...> " : "minisql> ") << std::flush;
+        }
+        if (!std::getline(in, line)) {
+            repl.finish();
+            break;
+        }
         if (!repl.handle(line)) break;
     }
     if (interactive) std::cout << "\n";
@@ -207,5 +292,6 @@ int main(int argc, char** argv) {
     for (const auto& c : commands) {
         if (!repl.handle(c)) break;
     }
+    repl.finish();
     return repl.failed() ? 1 : 0;
 }
