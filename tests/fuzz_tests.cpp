@@ -3,8 +3,13 @@
 // 1. Robustness: random and mutated SQL / CSV / schema text must either
 //    succeed or throw minisql::Error. Any other exception, a crash, or a
 //    sanitizer report is a bug.
+// 2. Differential: random valid queries are run through the engine and
+//    through a deliberately naive reference implementation in this file;
+//    results must match exactly (rows and order), with and without indexes.
 
+#include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -179,6 +184,161 @@ TEST(very_long_query_is_handled) {
     CHECK_EQ(e.query(sql).rows.size(), std::size_t{20});
     std::string longString = "SELECT id FROM users WHERE name = '" + std::string(1 << 20, 'x') + "'";
     CHECK_EQ(e.query(longString).rows.size(), std::size_t{0});
+}
+
+// -------------------------------------------------------- Differential ----
+
+namespace {
+
+struct RefPredicate {
+    std::size_t column;
+    CompareOp op;
+    Value literal;
+};
+
+bool refMatches(const Value& v, CompareOp op, const Value& lit) {
+    // Written independently of compareValues(): compare via std::variant's
+    // own operators, which order same-type alternatives naturally.
+    switch (op) {
+        case CompareOp::Eq: return v == lit;
+        case CompareOp::Ne: return v != lit;
+        case CompareOp::Lt: return v < lit;
+        case CompareOp::Le: return v <= lit;
+        case CompareOp::Gt: return v > lit;
+        case CompareOp::Ge: return v >= lit;
+    }
+    return false;
+}
+
+// Naive reference: filter in row order, stable sort, truncate, project.
+std::vector<Row> reference(const Table& t, const std::vector<std::size_t>& proj,
+                           const std::vector<RefPredicate>& preds,
+                           std::optional<std::size_t> orderCol, bool desc,
+                           std::optional<std::uint64_t> limit) {
+    std::vector<const Row*> kept;
+    for (const auto& row : t.rows()) {
+        bool ok = true;
+        for (const auto& p : preds) ok = ok && refMatches(row[p.column], p.op, p.literal);
+        if (ok) kept.push_back(&row);
+    }
+    if (orderCol) {
+        const std::size_t c = *orderCol;
+        std::stable_sort(kept.begin(), kept.end(), [&](const Row* a, const Row* b) {
+            return desc ? (*b)[c] < (*a)[c] : (*a)[c] < (*b)[c];
+        });
+    }
+    if (limit && *limit < kept.size()) kept.resize(static_cast<std::size_t>(*limit));
+    std::vector<Row> out;
+    for (const Row* r : kept) {
+        Row o;
+        for (std::size_t c : proj) o.push_back((*r)[c]);
+        out.push_back(std::move(o));
+    }
+    return out;
+}
+
+std::string sqlLiteral(const Value& v) {
+    if (const auto* i = std::get_if<std::int64_t>(&v)) return std::to_string(*i);
+    std::string s = "'";
+    for (char c : std::get<std::string>(v)) s += (c == '\'') ? std::string("''") : std::string(1, c);
+    return s + "'";
+}
+
+const char* opText(CompareOp op) {
+    switch (op) {
+        case CompareOp::Eq: return "=";
+        case CompareOp::Ne: return "!=";
+        case CompareOp::Lt: return "<";
+        case CompareOp::Le: return "<=";
+        case CompareOp::Gt: return ">";
+        case CompareOp::Ge: return ">=";
+    }
+    return "=";
+}
+
+void runDifferential(Engine& e, std::uint64_t seed, int queries) {
+    const Table& t = *e.catalog().find("users");
+    const auto& cols = t.columns();
+    Rng rng{seed};
+    const std::vector<CompareOp> ops{CompareOp::Eq, CompareOp::Ne, CompareOp::Lt,
+                                     CompareOp::Le, CompareOp::Gt, CompareOp::Ge};
+    for (int q = 0; q < queries; ++q) {
+        // Projection: '*' or a random non-empty subset in random order.
+        std::vector<std::size_t> proj;
+        std::string sql = "SELECT ";
+        if (rng.chance(4)) {
+            for (std::size_t c = 0; c < cols.size(); ++c) proj.push_back(c);
+            sql += "*";
+        } else {
+            std::vector<std::size_t> all{0, 1, 2, 3};
+            for (std::size_t i = all.size(); i > 1; --i) std::swap(all[i - 1], all[rng.below(i)]);
+            proj.assign(all.begin(), all.begin() + static_cast<std::ptrdiff_t>(1 + rng.below(4)));
+            for (std::size_t i = 0; i < proj.size(); ++i) sql += (i ? ", " : "") + cols[proj[i]].name;
+        }
+        sql += " FROM users";
+
+        // Predicates: literals drawn from real cell values (so equality hits)
+        // or random values (so misses and range edges happen too).
+        std::vector<RefPredicate> preds;
+        const std::size_t npred = rng.below(4);
+        for (std::size_t i = 0; i < npred; ++i) {
+            const std::size_t c = rng.below(cols.size());
+            Value lit;
+            if (!rng.chance(4) && t.rowCount() > 0) {
+                lit = t.rows()[rng.below(t.rowCount())][c];
+            } else if (cols[c].type == ColumnType::Int64) {
+                lit = static_cast<std::int64_t>(rng.below(200)) - 50;
+            } else {
+                lit = std::string(rng.chance(2) ? "M" : "user_5");
+            }
+            const CompareOp op = rng.chance(2) ? CompareOp::Eq : rng.pick(ops);
+            preds.push_back({c, op, lit});
+            sql += std::string(i ? " AND " : " WHERE ") + cols[c].name + " " + opText(op) + " " +
+                   sqlLiteral(lit);
+        }
+
+        std::optional<std::size_t> orderCol;
+        bool desc = false;
+        if (rng.chance(2)) {
+            orderCol = rng.below(cols.size());
+            desc = rng.chance(2);
+            sql += " ORDER BY " + cols[*orderCol].name + (desc ? " DESC" : (rng.chance(2) ? " ASC" : ""));
+        }
+        std::optional<std::uint64_t> limit;
+        if (rng.chance(2)) {
+            limit = rng.below(30);
+            sql += " LIMIT " + std::to_string(*limit);
+        }
+
+        const std::vector<Row> expected = reference(t, proj, preds, orderCol, desc, limit);
+        const ResultSet got = e.query(sql);
+        if (got.rows != expected) {
+            throw testfw::Failure("result mismatch (" + std::to_string(got.rows.size()) + " vs " +
+                                  std::to_string(expected.size()) + " rows) for: " + sql);
+        }
+    }
+}
+
+}  // namespace
+
+TEST(differential_sample_data_no_index) {
+    Engine e = sampleEngine();
+    runDifferential(e, 10, 3000);
+}
+
+TEST(differential_sample_data_all_indexed) {
+    Engine e = sampleEngine();
+    for (const char* c : {"id", "name", "age", "city"}) e.createIndex("users", c);
+    runDifferential(e, 10, 3000);  // same queries as the unindexed run
+}
+
+TEST(differential_generated_data_with_indexes) {
+    Engine e;
+    e.addTable(generateUsers("users", 3000, 99));
+    runDifferential(e, 11, 300);
+    e.createIndex("users", "age");
+    e.createIndex("users", "city");
+    runDifferential(e, 11, 300);
 }
 
 MINISQL_TEST_MAIN()
