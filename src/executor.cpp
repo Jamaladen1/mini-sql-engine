@@ -1,7 +1,6 @@
 #include "minisql/executor.hpp"
 
 #include <algorithm>
-#include <numeric>
 #include <sstream>
 
 namespace minisql {
@@ -27,40 +26,58 @@ ResultSet execute(const PhysicalPlan& plan) {
     const Table& table = *plan.table;
     const auto& rows = table.rows();
 
-    // 1. Access path -> candidate row IDs, always in ascending row-id order.
-    std::vector<std::size_t> candidates;
-    if (plan.access == AccessKind::IndexLookup) {
-        const HashIndex* index = table.indexOn(plan.indexColumn);
-        if (index) {
-            candidates = index->lookup(plan.indexKey);
-        } else {
-            // Index vanished between planning and execution: fall back to a
-            // scan with the index predicate re-applied.
-            candidates.resize(rows.size());
-            std::iota(candidates.begin(), candidates.end(), std::size_t{0});
-            BoundPredicate eq{plan.indexColumn, CompareOp::Eq, plan.indexKey};
-            candidates.erase(std::remove_if(candidates.begin(), candidates.end(),
-                                            [&](std::size_t id) { return !matches(rows[id], eq); }),
-                             candidates.end());
-        }
-    } else {
-        candidates.resize(rows.size());
-        std::iota(candidates.begin(), candidates.end(), std::size_t{0});
-    }
+    // Without ORDER BY, output order is row-id order, so once `limit`
+    // rows have passed the filter no later row can appear in the result.
+    const bool earlyExit = plan.limit.has_value() && !plan.orderColumn;
+    const std::size_t stopAfter =
+        earlyExit ? static_cast<std::size_t>(*plan.limit) : rows.size();
 
     ResultSet result;
-    result.rowsExamined = candidates.size();
-
-    // 2. Residual filter.
     std::vector<std::size_t> ids;
-    ids.reserve(candidates.size());
-    for (std::size_t id : candidates) {
-        const Row& row = rows[id];
-        bool ok = true;
+
+    auto passes = [&plan](const Row& row) {
         for (const auto& p : plan.residual) {
-            if (!matches(row, p)) { ok = false; break; }
+            if (!matches(row, p)) return false;
         }
-        if (ok) ids.push_back(id);
+        return true;
+    };
+
+    // 1. Access path (candidate row IDs in ascending order) + 2. filter.
+    // Candidates are streamed, never copied into a separate list. Loops
+    // keep their counters in locals so the hot path stays tight.
+    const HashIndex* index =
+        plan.access == AccessKind::IndexLookup ? table.indexOn(plan.indexColumn) : nullptr;
+    if (stopAfter == 0) {
+        // LIMIT 0 without ORDER BY: nothing to examine.
+    } else if (index) {
+        const std::vector<std::size_t>& candidates = index->lookup(plan.indexKey);
+        ids.reserve(std::min(candidates.size(), stopAfter));
+        std::size_t i = 0;
+        while (i < candidates.size()) {
+            const std::size_t id = candidates[i++];
+            if (passes(rows[id])) {
+                ids.push_back(id);
+                if (ids.size() == stopAfter) break;
+            }
+        }
+        result.rowsExamined = i;
+    } else {
+        // Full scan. If the plan asked for an index that no longer exists,
+        // re-apply the index predicate here so the result is unchanged.
+        const bool recheckKey = plan.access == AccessKind::IndexLookup;
+        const BoundPredicate eq{plan.indexColumn, CompareOp::Eq, plan.indexKey};
+        ids.reserve(std::min(rows.size(), stopAfter));
+        std::size_t id = 0;
+        while (id < rows.size()) {
+            const Row& row = rows[id];
+            const std::size_t current = id++;
+            if (recheckKey && !matches(row, eq)) continue;
+            if (passes(row)) {
+                ids.push_back(current);
+                if (ids.size() == stopAfter) break;
+            }
+        }
+        result.rowsExamined = id;
     }
 
     // 3. Sort (total order: key, then row id ascending) and 4. LIMIT.
