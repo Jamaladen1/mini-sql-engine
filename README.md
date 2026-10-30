@@ -49,8 +49,15 @@ ctest --test-dir build --output-on-failure
 ```
 
 Tests: `parser_tests`, `csv_tests`, `execution_tests`, `index_tests` (unit and
-integration, using a tiny built-in test harness) plus `cli_smoke`, an
-end-to-end shell test of the CLI binary.
+integration, using a tiny built-in test harness), `fuzz_tests`, and
+`cli_smoke`, an end-to-end shell test of the CLI binary.
+
+`fuzz_tests` uses fixed seeds. It feeds tens of thousands of random and
+mutated SQL, CSV and schema inputs through the engine, checking that the
+only failures are clean `minisql::Error`s. It also compares random valid
+queries against a simple reference implementation, with and without
+indexes. `MINISQL_FUZZ_SCALE=<percent>` changes the iteration count. Any
+test binary takes a name filter, for example `./build/fuzz_tests differential`.
 
 Sanitizers (ASan + UBSan) on Linux:
 
