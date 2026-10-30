@@ -38,4 +38,25 @@ grep -q "(no tables)" <<<"$err"                    || fail "REPL continued after
 piped=$(printf 'load users data/users.csv --columns id:INT64,name:TEXT,age:INT64,city:TEXT\nindex users city\nSELECT id FROM users WHERE city = '\''Denver'\''\nquit\nSELECT 1\n' | "$BIN")
 grep -q "(2 rows)" <<<"$piped" || fail "piped REPL"
 
+# Multi-line SQL: a statement cut off mid-way continues until ';'.
+multi=$(printf '%s\n' \
+  "load users data/users.csv --schema data/users.schema.json" \
+  "timing off" \
+  "SELECT id, name" \
+  "  FROM users" \
+  "  WHERE city = 'Columbus'" \
+  "  ORDER BY age DESC" \
+  "  LIMIT 2;" \
+  "SELECT id," \
+  "" \
+  "SELECT name FROM users WHERE name = 'it''s" \
+  "';" \
+  "tables" | "$BIN" || true)
+grep -q "|  3 | Carol, PhD |" <<<"$multi"            || fail "multi-line query result"
+grep -q "(2 rows)" <<<"$multi"                       || fail "multi-line query row count"
+grep -q "expected column name but found end of input" <<<"$multi" || fail "blank line ends statement"
+grep -q "(0 rows)" <<<"$multi"                       || fail "string literal spanning lines"
+grep -q "users (20 rows)" <<<"$multi"                || fail "REPL continued after multi-line input"
+grep -q "Time:" <<<"$multi" && fail "timing off still printed times"
+
 echo "CLI smoke test passed"
