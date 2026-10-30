@@ -51,7 +51,7 @@ target_compile_options(minisql_bench PRIVATE ${MINISQL_WARNINGS})
 # ---- tests ----
 if(MINISQL_BUILD_TESTS)
   enable_testing()
-  foreach(t parser_tests csv_tests execution_tests index_tests)
+  foreach(t parser_tests csv_tests execution_tests index_tests fuzz_tests)
     add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE minisql_core)
     target_compile_options(${t} PRIVATE ${MINISQL_WARNINGS})
