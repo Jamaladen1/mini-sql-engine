@@ -101,6 +101,11 @@ Logically: **WHERE → ORDER BY → LIMIT → projection**.
 Without ORDER BY, rows come out in row-ID order for both access paths. This
 is what makes indexed and full-scan results identical.
 
+Candidates are streamed through the filter, so no list of row IDs is built
+for a full scan. With `LIMIT k` and no ORDER BY, execution stops as soon as
+k rows have passed the filter, because no later row can be in the result.
+`EXPLAIN` marks this as `Limit k (stops scan early)`.
+
 ## Planner
 
 Rule-based. There is no cost model and none is claimed.

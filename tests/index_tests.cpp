@@ -142,6 +142,15 @@ TEST(rebuilding_index_is_idempotent) {
     CHECK_EQ(e.catalog().find("users")->indexedColumns().size(), std::size_t{1});
 }
 
+TEST(index_lookup_examines_only_matching_rows) {
+    Engine e = sampleEngine();
+    e.createIndex("users", "city");
+    CHECK_EQ(e.query("SELECT id FROM users WHERE city = 'Denver'").rowsExamined, std::size_t{2});
+    CHECK_EQ(e.query("SELECT id FROM users WHERE city = 'Columbus' LIMIT 3").rowsExamined,
+             std::size_t{3});
+    CHECK_EQ(e.query("SELECT id FROM users WHERE city = 'Nowhere'").rowsExamined, std::size_t{0});
+}
+
 TEST(index_errors) {
     Engine e = sampleEngine();
     CHECK_THROWS_WITH(e.createIndex("nope", "id"), "unknown table 'nope'");

@@ -1,6 +1,7 @@
 // Golden-result tests over data/users.csv (20 rows). Expected row IDs were
 // worked out by hand from the CSV; see the table in the file for reference.
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -140,6 +141,42 @@ TEST(limit_zero_and_large_limit) {
     CHECK_EQ(names(zero), std::string("id,name"));
     CHECK_EQ(e.query("SELECT id FROM users LIMIT 1000").rows.size(), std::size_t{20});
     CHECK_EQ(col0(e.query("SELECT id FROM users LIMIT 3")), std::string("1,2,3"));
+}
+
+TEST(limit_without_order_by_stops_scan_early) {
+    Engine e = makeEngine();
+    ResultSet r = e.query("SELECT id FROM users WHERE city = 'Columbus' LIMIT 2");
+    CHECK_EQ(col0(r), std::string("1,3"));
+    CHECK_EQ(r.rowsExamined, std::size_t{3});  // rows 1, 2, 3 only
+    CHECK_EQ(e.query("SELECT id FROM users LIMIT 0").rowsExamined, std::size_t{0});
+    CHECK_EQ(e.query("SELECT id FROM users LIMIT 5").rowsExamined, std::size_t{5});
+}
+
+TEST(limit_with_order_by_still_examines_every_row) {
+    Engine e = makeEngine();
+    ResultSet r = e.query("SELECT id FROM users ORDER BY age DESC LIMIT 1");
+    CHECK_EQ(col0(r), std::string("17"));
+    CHECK_EQ(r.rowsExamined, std::size_t{20});
+}
+
+TEST(early_exit_matches_full_result_prefix) {
+    Engine e = makeEngine();
+    ResultSet all = e.query("SELECT id FROM users WHERE age >= 30");
+    for (std::uint64_t k = 0; k <= all.rows.size() + 1; ++k) {
+        ResultSet part =
+            e.query("SELECT id FROM users WHERE age >= 30 LIMIT " + std::to_string(k));
+        CHECK_EQ(part.rows.size(), std::min<std::size_t>(k, all.rows.size()));
+        for (std::size_t i = 0; i < part.rows.size(); ++i) CHECK(part.rows[i] == all.rows[i]);
+    }
+}
+
+TEST(explain_marks_early_exit) {
+    Engine e = makeEngine();
+    CHECK(e.explain("SELECT * FROM users LIMIT 3").find("Limit 3 (stops scan early)") !=
+          std::string::npos);
+    CHECK(e.explain("SELECT * FROM users ORDER BY id LIMIT 3").find("stops scan early") ==
+          std::string::npos);
+    CHECK(e.explain("SELECT * FROM users").find("stops scan early") == std::string::npos);
 }
 
 TEST(semantic_errors) {
