@@ -1,5 +1,7 @@
 # Mini SQL Query Engine (C++20)
 
+[![CI](https://github.com/Jamaladen1/mini-sql-engine/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Jamaladen1/mini-sql-engine/actions/workflows/ci.yml)
+
 A small in-memory relational query engine written from scratch in modern C++.
 It loads typed CSV tables, parses a documented SQL subset, builds an
 execution plan, runs it, and can use single-column hash indexes for

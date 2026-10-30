@@ -1,12 +1,23 @@
 name: CI
 on:
   push:
+    branches: [main]   # PR branches are covered by the pull_request trigger
   pull_request:
+
+# A new push to the same branch or PR cancels the run it replaces.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   build-test:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     strategy:
+      fail-fast: false
       matrix:
         compiler: [g++, clang++]
     steps:
@@ -17,11 +28,55 @@ jobs:
         run: cmake --build build -j
       - name: Test
         run: ctest --test-dir build --output-on-failure
-      - name: Benchmark (short)
-        run: ./build/minisql_bench --rows 10000 --iterations 5
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DMINISQL_WERROR=ON
+      - name: Build
+        run: cmake --build build -j
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      # ASan is not run here: AddressSanitizer in some Apple clang versions
+      # crashes during its own startup. The Linux sanitizers job covers it.
+      - name: UBSan
+        run: |
+          cmake -S . -B build-ubsan -DCMAKE_BUILD_TYPE=Debug -DMINISQL_WERROR=ON \
+            -DCMAKE_CXX_FLAGS="-fsanitize=undefined -fno-sanitize-recover=all" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=undefined"
+          cmake --build build-ubsan -j
+          ctest --test-dir build-ubsan --output-on-failure
+
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DMINISQL_BUILD_TESTS=OFF
+          cmake --build build -j --target minisql_bench
+      # Exits nonzero if indexed and full-scan results ever differ.
+      - name: Run benchmark
+        run: ./build/minisql_bench --rows 10000,100000 --iterations 25 --warmup 3 | tee benchmark.md
+      - name: Add results to the job summary
+        run: |
+          {
+            cat benchmark.md
+            echo
+            echo "_Shared GitHub runner (${{ runner.os }}, $(nproc) vCPU). Timings are noisy; compare runs, not absolute numbers._"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-${{ github.sha }}
+          path: benchmark.md
 
   sanitizers:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: ASan + UBSan
@@ -29,6 +84,7 @@ jobs:
 
   docker:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Build image (runs tests)
