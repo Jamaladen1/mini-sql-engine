@@ -19,7 +19,9 @@ if(MINISQL_WERROR)
 endif()
 
 if(MINISQL_SANITIZE)
-  add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all)
+  # -O1 keeps sanitized tests fast enough to run in CI (ASan's own advice);
+  # -O0 made the randomized tests take tens of minutes.
+  add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all -O1)
   add_link_options(-fsanitize=address,undefined)
 endif()
 
@@ -51,7 +53,7 @@ target_compile_options(minisql_bench PRIVATE ${MINISQL_WARNINGS})
 # ---- tests ----
 if(MINISQL_BUILD_TESTS)
   enable_testing()
-  foreach(t parser_tests csv_tests execution_tests index_tests)
+  foreach(t parser_tests csv_tests execution_tests index_tests fuzz_tests)
     add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE minisql_core)
     target_compile_options(${t} PRIVATE ${MINISQL_WARNINGS})
