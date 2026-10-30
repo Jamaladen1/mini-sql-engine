@@ -35,37 +35,49 @@ ResultSet execute(const PhysicalPlan& plan) {
     ResultSet result;
     std::vector<std::size_t> ids;
 
-    // Applies residual predicates to one candidate. Returns false to stop.
-    auto consider = [&](std::size_t id) {
-        if (ids.size() >= stopAfter) return false;
-        ++result.rowsExamined;
-        const Row& row = rows[id];
+    auto passes = [&plan](const Row& row) {
         for (const auto& p : plan.residual) {
-            if (!matches(row, p)) return true;
+            if (!matches(row, p)) return false;
         }
-        ids.push_back(id);
         return true;
     };
 
     // 1. Access path (candidate row IDs in ascending order) + 2. filter.
-    // Candidates are streamed, never copied into a separate list.
+    // Candidates are streamed, never copied into a separate list. Loops
+    // keep their counters in locals so the hot path stays tight.
     const HashIndex* index =
         plan.access == AccessKind::IndexLookup ? table.indexOn(plan.indexColumn) : nullptr;
-    if (index) {
-        const std::vector<std::size_t>& matchesForKey = index->lookup(plan.indexKey);
-        ids.reserve(std::min(matchesForKey.size(), stopAfter));
-        for (std::size_t id : matchesForKey) {
-            if (!consider(id)) break;
+    if (stopAfter == 0) {
+        // LIMIT 0 without ORDER BY: nothing to examine.
+    } else if (index) {
+        const std::vector<std::size_t>& candidates = index->lookup(plan.indexKey);
+        ids.reserve(std::min(candidates.size(), stopAfter));
+        std::size_t i = 0;
+        while (i < candidates.size()) {
+            const std::size_t id = candidates[i++];
+            if (passes(rows[id])) {
+                ids.push_back(id);
+                if (ids.size() == stopAfter) break;
+            }
         }
+        result.rowsExamined = i;
     } else {
         // Full scan. If the plan asked for an index that no longer exists,
         // re-apply the index predicate here so the result is unchanged.
         const bool recheckKey = plan.access == AccessKind::IndexLookup;
         const BoundPredicate eq{plan.indexColumn, CompareOp::Eq, plan.indexKey};
-        for (std::size_t id = 0; id < rows.size(); ++id) {
-            if (recheckKey && !matches(rows[id], eq)) continue;
-            if (!consider(id)) break;
+        ids.reserve(std::min(rows.size(), stopAfter));
+        std::size_t id = 0;
+        while (id < rows.size()) {
+            const Row& row = rows[id];
+            const std::size_t current = id++;
+            if (recheckKey && !matches(row, eq)) continue;
+            if (passes(row)) {
+                ids.push_back(current);
+                if (ids.size() == stopAfter) break;
+            }
         }
+        result.rowsExamined = id;
     }
 
     // 3. Sort (total order: key, then row id ascending) and 4. LIMIT.
