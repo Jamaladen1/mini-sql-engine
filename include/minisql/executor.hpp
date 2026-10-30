@@ -11,7 +11,9 @@ namespace minisql {
 struct ResultSet {
     std::vector<Column> columns;
     std::vector<Row> rows;
-    std::size_t rowsExamined = 0;  // candidate rows produced by the access path
+    // Rows the filter actually looked at. Smaller than the table when an
+    // index narrows the candidates or LIMIT without ORDER BY stops early.
+    std::size_t rowsExamined = 0;
 };
 
 // Executes a physical plan: produce candidate row IDs (scan or index),
