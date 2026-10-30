@@ -73,8 +73,8 @@ inline int runAll() {
 
 #define CHECK_EQ(a, b)                                                              \
     do {                                                                            \
-        const auto& va_ = (a);                                                      \
-        const auto& vb_ = (b);                                                      \
+        const auto va_ = (a);  /* copies: (a) may be a temporary */            \
+        const auto vb_ = (b);                                                       \
         if (!(va_ == vb_)) {                                                        \
             std::ostringstream os_;                                                 \
             os_ << __FILE__ << ":" << __LINE__ << ": CHECK_EQ(" #a ", " #b ") failed: [" \
