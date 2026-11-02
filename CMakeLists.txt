@@ -30,6 +30,7 @@ add_library(minisql_core
   src/value.cpp
   src/catalog.cpp
   src/csv.cpp
+  src/json.cpp
   src/lexer.cpp
   src/parser.cpp
   src/validator.cpp
