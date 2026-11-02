@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mini SQL Engine</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">▦</span>
+      <div>
+        <h1>Mini SQL Engine</h1>
+        <p class="tagline">An in-memory query engine written from scratch in C++20</p>
+      </div>
+    </div>
+    <a class="repo-link" href="https://github.com/Jamaladen1/mini-sql-engine" rel="noopener">Source on GitHub</a>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar" aria-labelledby="tables-heading">
+      <div class="sidebar-head">
+        <h2 id="tables-heading">Tables</h2>
+        <button type="button" id="reload" class="link-button" title="Reload the sample datasets">Reset</button>
+      </div>
+      <div id="tables" class="tables"><p class="muted">Loading…</p></div>
+      <p class="hint">
+        Supports <code>SELECT</code>, <code>WHERE</code> with <code>AND</code>,
+        <code>=</code> <code>!=</code> <code>&lt;</code> <code>&lt;=</code> <code>&gt;</code> <code>&gt;=</code>,
+        <code>ORDER BY</code>, <code>LIMIT</code> and <code>EXPLAIN</code>.
+        Strings use single quotes.
+      </p>
+    </aside>
+
+    <section class="workspace">
+      <div class="panel">
+        <div class="examples" id="examples" aria-label="Example queries"></div>
+        <label for="sql" class="visually-hidden">SQL query</label>
+        <textarea id="sql" spellcheck="false" autocomplete="off" rows="4">SELECT id, name, age FROM users WHERE age >= 21 AND city = 'Columbus' ORDER BY age DESC LIMIT 10</textarea>
+        <div class="actions">
+          <button type="button" id="run" class="primary">Run</button>
+          <button type="button" id="explain">Explain</button>
+          <span class="shortcut muted">⌘/Ctrl + Enter to run</span>
+        </div>
+      </div>
+
+      <div id="error" class="panel error" role="alert" hidden></div>
+
+      <div id="output" class="panel" hidden>
+        <div class="stats" id="stats"></div>
+        <details class="plan" id="plan-box" open>
+          <summary>Execution plan</summary>
+          <pre id="plan"></pre>
+        </details>
+        <div class="table-wrap" id="results"></div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
