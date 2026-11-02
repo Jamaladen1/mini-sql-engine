@@ -59,8 +59,11 @@ jobs:
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DMINISQL_BUILD_TESTS=OFF
           cmake --build build -j --target minisql_bench
-      # Exits nonzero if indexed and full-scan results ever differ.
+      # minisql_bench exits nonzero if indexed and full-scan results ever
+      # differ. `shell: bash` turns on pipefail, so that exit code survives
+      # the pipe into tee (the default shell would report tee's status).
       - name: Run benchmark
+        shell: bash
         run: ./build/minisql_bench --rows 10000,100000 --iterations 25 --warmup 3 | tee benchmark.md
       - name: Add results to the job summary
         run: |
