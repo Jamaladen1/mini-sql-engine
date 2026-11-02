@@ -153,9 +153,53 @@ index, then builds the index and repeats. It reports the median, checks that
 both paths return identical rows, and computes the speedup from the measured
 medians. No numbers are hard-coded.
 
+## Browser demo server
+
+Spec section 8. The server is a separate library (`minisql_http`, in
+`apps/server/`) plus the `minisql_server` program. The engine core has no
+networking code.
+
+```
+browser ── HTTP ──► http_socket.cpp ─► http.cpp ─► api.cpp ─► Engine
+                    (accept loop)      (parse)     (routes, JSON)
+```
+
+- **HTTP.** A deliberately small HTTP/1.1 subset written for this project
+  on POSIX sockets, instead of an outside library. One request per
+  connection (`Connection: close`) and `Content-Length` bodies only.
+  `Transfer-Encoding` is refused (501), and conflicting `Content-Length`
+  headers, header line folding and bytes after the body are rejected
+  (400). The parser is a pure function, so it's unit-tested without
+  sockets.
+- **Concurrency.** One connection at a time. Every read and write has a
+  5 s timeout, so a slow or stalled client delays others by at most that.
+  This is fine for a demo; it's not built for heavy traffic.
+- **Limits.** Headers 8 KiB, body 16 KiB, SQL 4 KiB, 500 result rows per
+  response (the total count is still reported). Query time is bounded by
+  the data: the largest table has 100,000 rows, and every query is at
+  worst a scan plus a sort. There's no per-query cancellation.
+- **No user paths.** Data comes only from the bundled `data/users.csv` and
+  the deterministic generator. Static files are a fixed list read once at
+  startup and served by exact path match, so path traversal has nothing to
+  reach.
+- **Binding.** `127.0.0.1` by default. `0.0.0.0` must be requested
+  explicitly (Docker needs it).
+- **Browser safety.** Responses send `Content-Security-Policy:
+  default-src 'self'`, `nosniff` and `no-store`. The page uses no inline
+  scripts or outside resources, and inserts every server value as text,
+  never HTML. `jsonQuote` also escapes `<`, `>` and `&`.
+- **Numbers.** INT64 values outside ±2^53 are sent as JSON strings, so
+  JavaScript never shows a silently rounded number.
+- **Errors.** Every `minisql::Error` becomes a 400 with `kind`, `message`
+  and the byte `position`. The page turns that into a caret under the
+  failing spot.
+
+The benchmark chart runs each query 15 times on `users_100k` and on
+`users_100k_indexed` (identical rows), and plots the median of the
+engine's own `elapsedMs`, so network time isn't included. It checks that
+both tables used the expected access path and returned the same answers
+before drawing anything.
+
 ## Not implemented
 
-- The optional HTTP/browser demo (spec section 8, a stretch goal). The core
-  library is separate from the CLI, so a thin HTTP wrapper could be added
-  later without touching the engine.
 - Everything in the spec's non-goals list.

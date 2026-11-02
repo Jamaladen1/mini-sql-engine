@@ -26,6 +26,10 @@ Clean build with zero warnings (`-Wall -Wextra -Wpedantic -Wshadow
 | execution_tests | 21/21 | golden results for every operator, AND, ORDER BY ties, LIMIT, LIMIT early exit, errors, EXPLAIN |
 | index_tests | 12/12 | index vs full-scan parity, duplicate/missing keys, planner choice, rows examined |
 | fuzz_tests | 10/10 | 85k random/mutated SQL, CSV and JSON inputs; random queries vs a reference implementation |
+| json_tests | 7/7 | JSON parsing, `\u` escapes and surrogate pairs, `jsonQuote`, round trips (added with the browser demo) |
+| http_tests | 10/10 | HTTP request parser limits and rejections, response writer (browser demo) |
+| api_tests | 12/12 | every API endpoint, errors, limits, truncation, static files (browser demo) |
+| http_smoke | passed | real server over sockets: curl + raw malformed requests, stalled client, SIGTERM shutdown (browser demo) |
 | cli_smoke | passed | end-to-end CLI: load, index, explain, errors, piped REPL, multi-line SQL, `timing`, `quit` |
 
 ## 2. CI (GitHub Actions, same commit)
@@ -106,6 +110,24 @@ pre-PR build at the time).
 - Debug (`-O0`) ASan builds made the randomized tests exceed CTest's
   timeout. Sanitized builds now use `-O1`.
 
+## Browser demo (PR #6)
+
+Run on the `feature/http-demo` branch, 2026-11-02, on the same machine:
+
+- `ctest`: 10/10 targets pass, with the four browser-demo rows above added.
+  The build has zero warnings with `-Werror`.
+- `tests/http_smoke_test.sh build/minisql_server`: passes in about 6 s,
+  most of it waiting out the stalled-client timeout.
+- Manually in a browser (desktop and a 375 px phone viewport, light and
+  dark): the example queries, the error caret, table links, `Reset`, and
+  the benchmark chart. The chart's run returned matching answers on both
+  tables, with medians of 0.863 → 0.004 ms for `id = 50007`, 1.11 → 0.337
+  ms for `city = 'Denver'`, and 0.876 → 0.105 ms for `city = 'Denver' AND
+  age >= 75`.
+
+Linux, sanitizer and Docker results for this change are in the PR's CI checks.
+
 ## Not covered
 
-- The optional HTTP/browser demo (spec §8) is not built yet, so it has no tests.
+- Load testing the demo server. It handles one connection at a time by
+  design (see DESIGN.md).
