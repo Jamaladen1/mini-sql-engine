@@ -174,6 +174,105 @@ async function run(explainOnly) {
   }
 }
 
+// ---- benchmark ----
+
+const BENCH_ITERATIONS = 15;
+const BENCH_QUERIES = [
+  { label: "WHERE id = 50007", detail: "unique key, 1 row", where: "WHERE id = 50007" },
+  { label: "WHERE city = 'Denver'", detail: "~10% of rows", where: "WHERE city = 'Denver'" },
+  { label: "city = 'Denver' AND age >= 75", detail: "index + residual filter", where: "WHERE city = 'Denver' AND age >= 75" },
+];
+
+function median(values) {
+  const v = [...values].sort((a, b) => a - b);
+  const m = v.length >> 1;
+  return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
+}
+
+async function timeQuery(sql) {
+  const samples = [];
+  let last;
+  for (let i = 0; i < BENCH_ITERATIONS; i++) {
+    last = await api("/api/query", { sql });
+    samples.push(last.elapsedMs);
+  }
+  return { ms: median(samples), result: last };
+}
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+function svg(tag, attrs, text) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, String(v));
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function fmtMs(ms) {
+  return ms >= 1 ? `${ms.toFixed(2)} ms` : `${ms.toFixed(3)} ms`;
+}
+
+// Grouped horizontal bars on a shared linear scale, so the size difference
+// between scan and index is shown honestly (index bars can be very short).
+function renderBenchChart(rows) {
+  const width = 720, labelW = 230, rightPad = 150, barH = 16, gap = 4, groupGap = 22;
+  const plotW = width - labelW - rightPad;
+  const height = rows.length * (2 * barH + gap + groupGap);
+  const max = Math.max(...rows.map((r) => r.scan));
+  const chart = svg("svg", { viewBox: `0 0 ${width} ${height}`, role: "img",
+    "aria-label": "Median query time, full scan versus index lookup" });
+
+  rows.forEach((r, i) => {
+    const y = i * (2 * barH + gap + groupGap) + 4;
+    chart.append(svg("text", { x: 0, y: y + barH - 3, class: "label" }, r.label));
+    chart.append(svg("text", { x: 0, y: y + 2 * barH + gap - 3, class: "sub" }, r.detail));
+    for (const [k, kind, cls] of [[0, "scan", "bar-scan"], [1, "index", "bar-index"]]) {
+      const value = r[kind];
+      const by = y + k * (barH + gap);
+      const w = Math.max(2, (value / max) * plotW);
+      chart.append(svg("rect", { x: labelW, y: by, width: w, height: barH, rx: 3, class: cls }));
+      chart.append(svg("text", { x: labelW + w + 6, y: by + barH - 4 }, fmtMs(value)));
+    }
+    chart.append(svg("text", { x: width - 4, y: y + barH + 6, "text-anchor": "end", class: "speedup" },
+      `${(r.scan / r.index).toFixed(1)}× faster`));
+  });
+
+  const legend = el("div", { class: "bench-legend" },
+    el("span", { class: "scan", text: "Full scan (users_100k)" }),
+    el("span", { class: "index", text: "Index lookup (users_100k_indexed)" }));
+  $("bench-chart").replaceChildren(chart, legend);
+}
+
+async function runBenchmark() {
+  const button = $("bench-run");
+  const status = $("bench-status");
+  button.disabled = true;
+  const rows = [];
+  try {
+    for (const [i, q] of BENCH_QUERIES.entries()) {
+      status.textContent = `Running query ${i + 1} of ${BENCH_QUERIES.length}…`;
+      const scan = await timeQuery(`SELECT * FROM users_100k ${q.where}`);
+      const index = await timeQuery(`SELECT * FROM users_100k_indexed ${q.where}`);
+      if (index.result.access !== "IndexLookup" || scan.result.access !== "FullScan") {
+        throw { message: "unexpected access path; were the sample tables reset?" };
+      }
+      // Both tables hold identical rows, so the answers must match. The API
+      // returns at most 500 rows, so this compares counts plus those rows.
+      const same = scan.result.rowCount === index.result.rowCount &&
+        JSON.stringify(scan.result.rows) === JSON.stringify(index.result.rows);
+      if (!same) throw { message: `results differ for ${q.label}` };
+      rows.push({ ...q, scan: scan.ms, index: index.ms, count: scan.result.rowCount });
+      renderBenchChart(rows);
+    }
+    status.textContent = `Done. Both access paths returned the same row counts ` +
+      `(${rows.map((r) => r.count.toLocaleString()).join(", ")}), and every row the API ` +
+      `returned (up to 500 per query) matched exactly.`;
+  } catch (e) {
+    status.textContent = `Benchmark failed: ${e.message || e}`;
+  } finally {
+    button.disabled = false;
+  }
+}
+
 // ---- wiring ----
 
 function init() {
@@ -186,6 +285,8 @@ function init() {
   $("run").addEventListener("click", () => run(false));
   $("explain").addEventListener("click", () => run(true));
   $("reload").addEventListener("click", () => loadTables(true));
+  $("bench-run").addEventListener("click", runBenchmark);
+  $("bench-iterations").textContent = String(BENCH_ITERATIONS);
   $("sql").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();

@@ -56,6 +56,23 @@
         </details>
         <div class="table-wrap" id="results"></div>
       </div>
+
+      <section class="panel bench" aria-labelledby="bench-heading">
+        <div class="bench-head">
+          <div>
+            <h2 id="bench-heading">Full scan vs hash index</h2>
+            <p class="muted">
+              Runs each query on <code>users_100k</code> (no indexes) and
+              <code>users_100k_indexed</code> (indexes on <code>id</code> and <code>city</code>):
+              the same 100,000 rows. Bars show the median engine time over
+              <span id="bench-iterations"></span> runs, measured on the server.
+            </p>
+          </div>
+          <button type="button" id="bench-run" class="primary">Run benchmark</button>
+        </div>
+        <div id="bench-status" class="muted" aria-live="polite"></div>
+        <div id="bench-chart" class="bench-chart"></div>
+      </section>
     </section>
   </main>
 </body>
