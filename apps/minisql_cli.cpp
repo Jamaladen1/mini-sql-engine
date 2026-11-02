@@ -7,8 +7,8 @@
 
 #include <cstdio>
 #include <fstream>
-#include <optional>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -37,7 +37,7 @@ const char* kHelp =
     "  quit | exit                     leave\n"
     "Lines starting with '#' or '--' are comments.\n"
     "A query cut off mid-statement (e.g. 'SELECT id,') continues on the next\n"
-    "lines until one ends with ';'. A blank line ends it early.\n";
+    "lines until one ends with ';'. A blank line ends it early; quit still quits.\n";
 
 std::string trim(const std::string& s) {
     const auto b = s.find_first_not_of(" \t\r\n");
@@ -81,6 +81,12 @@ public:
 
         if (!pending_.empty()) {
             if (comment) return true;
+            // quit/exit always leave, even in the middle of a statement.
+            const std::string word = lower(line);
+            if (word == "quit" || word == "exit" || word == "\\q") {
+                pending_.clear();
+                return false;
+            }
             if (line.empty()) {
                 // A blank line ends an unfinished statement; report why.
                 return dispatch(takePending());
@@ -156,7 +162,6 @@ private:
     }
 
     bool dispatch(const std::string& line) {
-
         const auto sp = line.find_first_of(" \t\n");
         const std::string cmd = lower(line.substr(0, sp));
         const std::string rest = sp == std::string::npos ? "" : trim(line.substr(sp + 1));

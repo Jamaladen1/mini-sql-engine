@@ -59,4 +59,8 @@ grep -q "(0 rows)" <<<"$multi"                       || fail "string literal spa
 grep -q "users (20 rows)" <<<"$multi"                || fail "REPL continued after multi-line input"
 grep -q "Time:" <<<"$multi" && fail "timing off still printed times"
 
+# quit works even in the middle of an unfinished statement.
+quitmid=$(printf '%s\n' "SELECT id," "quit" "tables" | "$BIN" || true)
+grep -q "ERROR" <<<"$quitmid" && fail "quit mid-statement did not exit"
+
 echo "CLI smoke test passed"
