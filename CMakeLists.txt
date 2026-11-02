@@ -54,6 +54,7 @@ target_compile_options(minisql_bench PRIVATE ${MINISQL_WARNINGS})
 # ---- demo HTTP server (outside the engine core, see spec section 8) ----
 add_library(minisql_http
   apps/server/http.cpp
+  apps/server/http_socket.cpp
 )
 target_include_directories(minisql_http PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/apps/server)
 target_link_libraries(minisql_http PUBLIC minisql_core)
