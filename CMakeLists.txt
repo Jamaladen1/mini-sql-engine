@@ -51,12 +51,28 @@ add_executable(minisql_bench apps/minisql_bench.cpp)
 target_link_libraries(minisql_bench PRIVATE minisql_core)
 target_compile_options(minisql_bench PRIVATE ${MINISQL_WARNINGS})
 
+# ---- demo HTTP server (outside the engine core, see spec section 8) ----
+add_library(minisql_http
+  apps/server/http.cpp
+)
+target_include_directories(minisql_http PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/apps/server)
+target_link_libraries(minisql_http PUBLIC minisql_core)
+target_compile_options(minisql_http PRIVATE ${MINISQL_WARNINGS})
+
 # ---- tests ----
 if(MINISQL_BUILD_TESTS)
   enable_testing()
   foreach(t parser_tests csv_tests execution_tests index_tests fuzz_tests json_tests)
     add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE minisql_core)
+    target_compile_options(${t} PRIVATE ${MINISQL_WARNINGS})
+    target_compile_definitions(${t} PRIVATE MINISQL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME ${t} COMMAND ${t})
+  endforeach()
+
+  foreach(t http_tests)
+    add_executable(${t} tests/${t}.cpp)
+    target_link_libraries(${t} PRIVATE minisql_http)
     target_compile_options(${t} PRIVATE ${MINISQL_WARNINGS})
     target_compile_definitions(${t} PRIVATE MINISQL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     add_test(NAME ${t} COMMAND ${t})
