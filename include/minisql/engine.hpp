@@ -13,6 +13,7 @@ namespace minisql {
 struct QueryOutcome {
     bool explain = false;
     std::string planText;   // filled for EXPLAIN (and always available)
+    AccessKind access = AccessKind::FullScan;  // access path the plan chose
     ResultSet result;       // empty for EXPLAIN
     double elapsedMs = 0.0; // parse + validate + plan + execute
 };

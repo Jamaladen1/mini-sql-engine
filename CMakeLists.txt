@@ -55,6 +55,7 @@ target_compile_options(minisql_bench PRIVATE ${MINISQL_WARNINGS})
 add_library(minisql_http
   apps/server/http.cpp
   apps/server/http_socket.cpp
+  apps/server/api.cpp
 )
 target_include_directories(minisql_http PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/apps/server)
 target_link_libraries(minisql_http PUBLIC minisql_core)
@@ -71,7 +72,7 @@ if(MINISQL_BUILD_TESTS)
     add_test(NAME ${t} COMMAND ${t})
   endforeach()
 
-  foreach(t http_tests)
+  foreach(t http_tests api_tests)
     add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE minisql_http)
     target_compile_options(${t} PRIVATE ${MINISQL_WARNINGS})

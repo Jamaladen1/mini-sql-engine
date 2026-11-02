@@ -9,6 +9,19 @@ namespace minisql {
 
 enum class ErrorKind { Syntax, Semantic, Csv, Schema, Catalog, Io };
 
+// Short machine-readable name, e.g. for JSON error responses.
+inline const char* errorKindName(ErrorKind k) noexcept {
+    switch (k) {
+        case ErrorKind::Syntax: return "syntax";
+        case ErrorKind::Semantic: return "semantic";
+        case ErrorKind::Csv: return "csv";
+        case ErrorKind::Schema: return "schema";
+        case ErrorKind::Catalog: return "catalog";
+        case ErrorKind::Io: return "io";
+    }
+    return "error";
+}
+
 // Every user-facing failure in the engine is reported through this type.
 // `position` is a zero-based byte offset into SQL text, or a 1-based line
 // number for CSV/schema errors (see `line`).
