@@ -61,6 +61,10 @@ target_include_directories(minisql_http PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/apps/
 target_link_libraries(minisql_http PUBLIC minisql_core)
 target_compile_options(minisql_http PRIVATE ${MINISQL_WARNINGS})
 
+add_executable(minisql_server apps/minisql_server.cpp)
+target_link_libraries(minisql_server PRIVATE minisql_http)
+target_compile_options(minisql_server PRIVATE ${MINISQL_WARNINGS})
+
 # ---- tests ----
 if(MINISQL_BUILD_TESTS)
   enable_testing()
