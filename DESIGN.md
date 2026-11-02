@@ -171,10 +171,11 @@ browser ── HTTP ──► http_socket.cpp ─► http.cpp ─► api.cpp ─
   headers, header line folding and bytes after the body are rejected
   (400). The parser is a pure function, so it's unit-tested without
   sockets.
-- **Concurrency.** One connection at a time. Each connection gets one 5 s
-  deadline for the whole exchange, enforced with `poll()` before every
-  read and write. A slow or stalled client, even one sending a byte at a
-  time, delays others by at most that. Connections close gracefully
+- **Concurrency.** One connection at a time. Each connection gets 5 s to
+  deliver a complete request, enforced with `poll()` before every read.
+  After that, sending the response gets up to 1 s more and the close up to
+  0.5 s, so a slow or stalled client, even one sending a byte at a time,
+  delays others by at most about 6.5 s. Connections close gracefully
   (`shutdown`, then a brief drain), so an early 413 or 400 isn't lost to a
   TCP reset. Fine for a demo; not built for heavy traffic.
 - **Limits.** Headers 8 KiB, body 16 KiB, SQL 4 KiB, 500 result rows per

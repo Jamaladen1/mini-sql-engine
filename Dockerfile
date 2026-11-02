@@ -2,7 +2,8 @@
 #   docker build -t minisql .
 #   docker run --rm -it minisql                      # interactive REPL
 #   docker run --rm minisql minisql_bench            # benchmark
-#   docker run --rm -p 8080:8080 minisql minisql_server --host 0.0.0.0   # browser demo
+#   docker run --rm -p 8080:8080 minisql minisql_server --host 0.0.0.0 \
+#       --allow-host localhost --allow-host 127.0.0.1                      # browser demo
 FROM ubuntu:24.04 AS build
 RUN apt-get update \
  && apt-get install -y --no-install-recommends g++ cmake make python3 curl ca-certificates \

@@ -61,8 +61,10 @@ using Handler = std::function<Response(const Request&)>;
 struct ServerOptions {
     std::string host = "127.0.0.1";  // IPv4 address to bind
     int port = 8080;
-    // Total time allowed per connection (receive request, run the query,
-    // send the response). One slow client delays others by at most this.
+    // Time allowed to receive a complete request. After it, the response
+    // gets up to 1 s more to send and the close up to 0.5 s to drain, so a
+    // slow client holds the server for at most ~6.5 s. The query itself
+    // isn't covered by this limit; it's bounded by the dataset size.
     int requestTimeoutSeconds = 5;
     Limits limits;
 };

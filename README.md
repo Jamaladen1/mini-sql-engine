@@ -281,12 +281,13 @@ docker run --rm minisql minisql_bench
 Browser demo, then open http://127.0.0.1:8080:
 
 ```bash
-docker run --rm -p 8080:8080 minisql minisql_server --host 0.0.0.0
+docker run --rm -p 8080:8080 minisql minisql_server --host 0.0.0.0 --allow-host localhost --allow-host 127.0.0.1
 ```
 
 `--host 0.0.0.0` is needed inside the container so Docker can forward the
-port. Outside Docker, keep the default `127.0.0.1` unless you mean to
-expose the server.
+port. The `--allow-host` names keep the `Host` check on (it blocks DNS
+rebinding) for http://localhost:8080 and http://127.0.0.1:8080. Outside
+Docker, keep the default `127.0.0.1` unless you mean to expose the server.
 
 The sample data is in `/app/data` inside the container, so
 `load users data/users.csv --schema data/users.schema.json` works as is.
