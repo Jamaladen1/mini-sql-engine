@@ -1,5 +1,7 @@
 # Mini SQL Query Engine (C++20)
 
+[![CI](https://github.com/Jamaladen1/mini-sql-engine/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Jamaladen1/mini-sql-engine/actions/workflows/ci.yml)
+
 A small in-memory relational query engine written from scratch in modern C++.
 It loads typed CSV tables, parses a documented SQL subset, builds an
 execution plan, runs it, and can use single-column hash indexes for
@@ -116,10 +118,23 @@ Project [id, name, age, city]
 | `query <SELECT ...>` or a bare `SELECT ...` line | Run a query |
 | `explain <SELECT ...>` or `EXPLAIN SELECT ...` | Show the plan without running it |
 | `tables` | List tables and row counts |
+| `timing [on\|off]` | Show or hide the `Time:` line after each query |
 | `schema <table>` | Show columns, types and indexes |
 | `help`, `quit` / `exit` | |
 
-Each statement is one line. Lines starting with `#` or `--` are comments.
+A statement that fits on one line runs when you press Enter. If a line
+stops partway through a statement (for example `SELECT id,`), the prompt
+changes to `...>` and the REPL keeps reading until a line ends with `;`.
+A blank line ends the statement early.
+
+```
+minisql> SELECT id, name
+   ...>   FROM users
+   ...>   WHERE city = 'Columbus'
+   ...>   ORDER BY age DESC LIMIT 2;
+```
+
+Lines starting with `#` or `--` are comments.
 
 Non-interactive use, all in one process:
 

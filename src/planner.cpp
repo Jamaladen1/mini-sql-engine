@@ -57,7 +57,9 @@ std::string explainPlan(const PhysicalPlan& p) {
     }
     out << "]\n";
 
-    out << "  Limit " << (p.limit ? std::to_string(*p.limit) : std::string("none")) << "\n";
+    out << "  Limit " << (p.limit ? std::to_string(*p.limit) : std::string("none"));
+    if (p.limit && !p.orderColumn) out << " (stops scan early)";
+    out << "\n";
 
     if (p.orderColumn) {
         out << "    Sort " << cols[*p.orderColumn].name << (p.descending ? " DESC" : " ASC")
