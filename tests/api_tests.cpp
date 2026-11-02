@@ -1,6 +1,7 @@
 // DemoApi tests: requests go straight to DemoApi::handle (no sockets) and
 // responses are parsed back with the engine's own JSON reader.
 
+#include <cstdint>
 #include <string>
 
 #include "api.hpp"
@@ -190,7 +191,9 @@ TEST(request_body_validation) {
 
 TEST(load_sample_resets_and_returns_tables) {
     DemoApi api = makeApi();
-    http::Response r = api.handle(post("/api/load-sample", "", ""));
+    CHECK_EQ(api.handle(post("/api/load-sample", "", "")).status, 415);
+    CHECK_EQ(api.handle(post("/api/load-sample", "x", "text/plain")).status, 415);
+    http::Response r = api.handle(post("/api/load-sample", "{}"));
     CHECK_EQ(r.status, 200);
     CHECK_EQ(body(r).get("tables")->arr.size(), std::size_t{3});
     CHECK_EQ(api.engine().catalog().find("users")->rowCount(), std::size_t{20});
@@ -210,6 +213,60 @@ TEST(static_files_exact_match_only) {
     CHECK_EQ(api.handle(get("/index.html/")).status, 404);
     CHECK_EQ(api.handle(post("/app.js", "")).status, 405);
     CHECK_EQ(errorKind(api.handle(get("/nope"))), std::string("http"));
+}
+
+namespace {
+
+DemoApi makeLocalApi() {
+    ApiOptions options;
+    options.allowedHosts = {"127.0.0.1:8080", "LocalHost:8080"};
+    return DemoApi(MINISQL_SOURCE_DIR "/data", {}, options);
+}
+
+http::Request withHeader(http::Request r, const std::string& name, const std::string& value) {
+    r.headers[name] = value;
+    return r;
+}
+
+}  // namespace
+
+TEST(host_allow_list_blocks_other_names) {
+    DemoApi api = makeLocalApi();
+    CHECK_EQ(api.handle(withHeader(get("/health"), "host", "127.0.0.1:8080")).status, 200);
+    CHECK_EQ(api.handle(withHeader(get("/health"), "host", "localhost:8080")).status, 200);  // case-insensitive
+    CHECK_EQ(api.handle(withHeader(get("/health"), "host", "evil.example")).status, 403);
+    CHECK_EQ(api.handle(withHeader(get("/health"), "host", "127.0.0.1:9999")).status, 403);
+    CHECK_EQ(api.handle(get("/health")).status, 400);  // no Host at all
+    // Without an allow list (e.g. bound to 0.0.0.0) any Host is fine.
+    DemoApi open = makeApi();
+    CHECK_EQ(open.handle(withHeader(get("/health"), "host", "evil.example")).status, 200);
+}
+
+TEST(cross_origin_posts_are_rejected) {
+    DemoApi api = makeLocalApi();
+    auto req = withHeader(post("/api/load-sample", "{}"), "host", "127.0.0.1:8080");
+    CHECK_EQ(api.handle(withHeader(req, "origin", "http://evil.example")).status, 403);
+    CHECK_EQ(api.handle(withHeader(req, "origin", "http://127.0.0.1:8080")).status, 200);
+    CHECK_EQ(api.handle(req).status, 200);  // no Origin: same-origin or non-browser client
+    auto plain = withHeader(post("/api/load-sample", "", "text/plain"), "host", "127.0.0.1:8080");
+    CHECK_EQ(api.handle(plain).status, 415);
+}
+
+TEST(int64_beyond_2_pow_53_is_sent_as_string) {
+    CHECK_EQ(valueToJson(Value{std::int64_t{9007199254740992LL}}), std::string("9007199254740992"));
+    CHECK_EQ(valueToJson(Value{std::int64_t{-9007199254740992LL}}), std::string("-9007199254740992"));
+    CHECK_EQ(valueToJson(Value{std::int64_t{9007199254740993LL}}), std::string("\"9007199254740993\""));
+    CHECK_EQ(valueToJson(Value{std::int64_t{-9007199254740993LL}}), std::string("\"-9007199254740993\""));
+    CHECK_EQ(valueToJson(Value{std::string("a\"b")}), std::string("\"a\\\"b\""));
+}
+
+TEST(error_for_non_ascii_query_is_valid_utf8) {
+    DemoApi api = makeApi();
+    http::Response r = api.handle(sqlPost("/api/query", "SELECT \xC3\xA9 FROM users"));
+    CHECK_EQ(r.status, 400);
+    const std::string msg = body(r).get("error")->get("message")->str;
+    CHECK(msg.find("unexpected byte 0xC3") != std::string::npos);
+    for (char c : r.body) CHECK(static_cast<unsigned char>(c) < 0x80);  // pure ASCII now
 }
 
 MINISQL_TEST_MAIN()

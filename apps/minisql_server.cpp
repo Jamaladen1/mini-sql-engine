@@ -1,16 +1,23 @@
 // Browser demo server for the Mini SQL Query Engine.
 //
 //   minisql_server [--host 127.0.0.1] [--port 8080] [--data data] [--web web]
+//                  [--allow-host NAME[:PORT]]...
 //
 // Serves the page in web/ and the JSON API (see apps/server/api.hpp).
 // Binds to 127.0.0.1 unless told otherwise; pass --host 0.0.0.0 only when
 // the server should be reachable from other machines (e.g. in Docker).
+//
+// Host header check: on 127.0.0.1 only "127.0.0.1:<port>" and
+// "localhost:<port>" are accepted (blocks DNS rebinding). On any other
+// address, --allow-host names the accepted hosts; with none given, any
+// Host is accepted.
 
 #include <cstdlib>
 #include <exception>
 #include <iostream>
 #include <map>
 #include <string>
+#include <vector>
 
 #include "api.hpp"
 #include "http.hpp"
@@ -29,7 +36,8 @@ const std::map<std::string, std::string> kStaticFiles{
 };
 
 int usage() {
-    std::cerr << "usage: minisql_server [--host IPV4] [--port N] [--data DIR] [--web DIR]\n";
+    std::cerr << "usage: minisql_server [--host IPV4] [--port N] [--data DIR] [--web DIR]\n"
+                 "                      [--allow-host NAME[:PORT]]...\n";
     return 2;
 }
 
@@ -39,6 +47,7 @@ int main(int argc, char** argv) {
     http::ServerOptions options;
     std::string dataDir = "data";
     std::string webDir = "web";
+    std::vector<std::string> allowHosts;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "-h" || arg == "--help") {
@@ -58,6 +67,8 @@ int main(int argc, char** argv) {
             dataDir = value;
         } else if (arg == "--web") {
             webDir = value;
+        } else if (arg == "--allow-host") {
+            allowHosts.push_back(value);
         } else {
             return usage();
         }
@@ -68,7 +79,17 @@ int main(int argc, char** argv) {
         for (const auto& [path, type] : kStaticFiles) {
             files[path] = {type, readFile(webDir + path)};
         }
-        demo::DemoApi api(dataDir, std::move(files));
+        demo::ApiOptions apiOptions;
+        const std::string port = std::to_string(options.port);
+        if (options.host == "127.0.0.1") {
+            apiOptions.allowedHosts = {"127.0.0.1:" + port, "localhost:" + port};
+        }
+        for (const auto& h : allowHosts) {
+            // Accept the name with and without the port.
+            apiOptions.allowedHosts.push_back(h);
+            if (h.find(':') == std::string::npos) apiOptions.allowedHosts.push_back(h + ":" + port);
+        }
+        demo::DemoApi api(dataDir, std::move(files), std::move(apiOptions));
         return http::serve(options, [&api](const http::Request& r) { return api.handle(r); });
     } catch (const Error& e) {
         std::cerr << "startup failed: " << e.what() << "\n";

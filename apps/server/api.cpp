@@ -49,9 +49,20 @@ std::string number(double v) {
     return buf;
 }
 
-// INT64 values outside JavaScript's exact integer range are sent as
-// strings so the browser never shows a silently rounded number.
-std::string valueJson(const Value& v) {
+const char* accessName(AccessKind a) {
+    return a == AccessKind::IndexLookup ? "IndexLookup" : "FullScan";
+}
+
+std::string lower(std::string s) {
+    for (char& c : s) {
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + 32);
+    }
+    return s;
+}
+
+}  // namespace
+
+std::string valueToJson(const Value& v) {
     if (const auto* i = std::get_if<std::int64_t>(&v)) {
         if (*i >= -kMaxSafeInt && *i <= kMaxSafeInt) return std::to_string(*i);
         return jsonQuote(std::to_string(*i));
@@ -59,15 +70,10 @@ std::string valueJson(const Value& v) {
     return jsonQuote(std::get<std::string>(v));
 }
 
-const char* accessName(AccessKind a) {
-    return a == AccessKind::IndexLookup ? "IndexLookup" : "FullScan";
-}
-
-}  // namespace
-
 DemoApi::DemoApi(std::string dataDir, std::map<std::string, StaticFile> staticFiles,
-                 ApiLimits limits)
-    : dataDir_(std::move(dataDir)), staticFiles_(std::move(staticFiles)), limits_(limits) {
+                 ApiOptions options)
+    : dataDir_(std::move(dataDir)), staticFiles_(std::move(staticFiles)), options_(std::move(options)) {
+    for (auto& h : options_.allowedHosts) h = lower(h);
     loadSample();
 }
 
@@ -85,7 +91,35 @@ void DemoApi::loadSample() {
     engine_ = std::move(fresh);
 }
 
+std::optional<http::Response> DemoApi::checkRequest(const http::Request& req) const {
+    if (!options_.allowedHosts.empty()) {
+        const std::string* host = req.header("host");
+        if (!host) return jsonError(400, "http", "missing Host header");
+        const auto& allowed = options_.allowedHosts;
+        const std::string h = lower(*host);
+        if (std::find(allowed.begin(), allowed.end(), h) == allowed.end()) {
+            return jsonError(403, "http", "host not allowed");
+        }
+        // Browsers send Origin on cross-site POSTs; it must be this site.
+        if (const std::string* origin = req.header("origin")) {
+            const std::string o = lower(*origin);
+            const bool sameSite = std::any_of(allowed.begin(), allowed.end(), [&](const std::string& a) {
+                return o == "http://" + a || o == "https://" + a;
+            });
+            if (!sameSite) return jsonError(403, "http", "cross-origin requests are not allowed");
+        }
+    }
+    if (req.method == "POST") {
+        const std::string* contentType = req.header("content-type");
+        if (!contentType || lower(*contentType).rfind("application/json", 0) != 0) {
+            return jsonError(415, "http", "send the body as application/json: {\"sql\": \"...\"}");
+        }
+    }
+    return std::nullopt;
+}
+
 http::Response DemoApi::handle(const http::Request& req) {
+    if (auto rejected = checkRequest(req)) return *rejected;
     const std::string& path = req.path;
 
     if (path == "/health") {
@@ -144,11 +178,6 @@ http::Response DemoApi::tables() const {
 }
 
 http::Response DemoApi::query(const http::Request& req, bool explainOnly) const {
-    const std::string* contentType = req.header("content-type");
-    if (!contentType || contentType->rfind("application/json", 0) != 0) {
-        return jsonError(415, "http", "send the body as application/json: {\"sql\": \"...\"}");
-    }
-
     std::string sql;
     try {
         const Json body = parseJson(req.body, ErrorKind::Syntax);
@@ -160,9 +189,9 @@ http::Response DemoApi::query(const http::Request& req, bool explainOnly) const 
     } catch (const Error& e) {
         return jsonError(400, "http", std::string("request body: ") + e.what());
     }
-    if (sql.size() > limits_.maxSqlBytes) {
+    if (sql.size() > options_.maxSqlBytes) {
         return jsonError(400, "http", "query is longer than " +
-                                          std::to_string(limits_.maxSqlBytes) + " bytes");
+                                          std::to_string(options_.maxSqlBytes) + " bytes");
     }
 
     QueryOutcome out;
@@ -186,7 +215,7 @@ http::Response DemoApi::query(const http::Request& req, bool explainOnly) const 
     if (!explainOnly) body += ",\"elapsedMs\":" + number(out.elapsedMs);
     if (!out.explain) {
         const ResultSet& rs = out.result;
-        const std::size_t shown = std::min(rs.rows.size(), limits_.maxResultRows);
+        const std::size_t shown = std::min(rs.rows.size(), options_.maxResultRows);
         body += ",\"rowCount\":" + std::to_string(rs.rows.size()) +
                 ",\"rowsExamined\":" + std::to_string(rs.rowsExamined) +
                 ",\"truncated\":" + (shown < rs.rows.size() ? "true" : "false") + ",\"columns\":[";
@@ -201,7 +230,7 @@ http::Response DemoApi::query(const http::Request& req, bool explainOnly) const 
             body += "[";
             for (std::size_t c = 0; c < rs.rows[r].size(); ++c) {
                 if (c) body += ",";
-                body += valueJson(rs.rows[r][c]);
+                body += valueToJson(rs.rows[r][c]);
             }
             body += "]";
         }
