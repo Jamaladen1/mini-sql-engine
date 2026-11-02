@@ -84,6 +84,15 @@ if(MINISQL_BUILD_TESTS)
     add_test(NAME ${t} COMMAND ${t})
   endforeach()
 
+  find_program(CURL_EXECUTABLE curl)
+  if(CURL_EXECUTABLE)
+    add_test(NAME http_smoke
+      COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/http_smoke_test.sh $<TARGET_FILE:minisql_server>
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+  else()
+    message(STATUS "curl not found: skipping the http_smoke test")
+  endif()
+
   add_test(NAME cli_smoke
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_smoke_test.sh $<TARGET_FILE:minisql>
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
