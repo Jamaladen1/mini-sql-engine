@@ -26,6 +26,10 @@ Clean build with zero warnings (`-Wall -Wextra -Wpedantic -Wshadow
 | execution_tests | 21/21 | golden results for every operator, AND, ORDER BY ties, LIMIT, LIMIT early exit, errors, EXPLAIN |
 | index_tests | 12/12 | index vs full-scan parity, duplicate/missing keys, planner choice, rows examined |
 | fuzz_tests | 10/10 | 85k random/mutated SQL, CSV and JSON inputs; random queries vs a reference implementation |
+| json_tests | 12/12 | strict JSON parsing, `\u` escapes and surrogates, `jsonQuote` always valid UTF-8 (checked by an independent validator on all bytes and 5000 random strings) |
+| http_tests | 10/10 | HTTP request parser limits and rejections, response writer |
+| api_tests | 16/16 | every API endpoint, errors, limits, truncation, static files, Host/Origin checks, 2^53 boundary |
+| http_smoke | passed | real server over sockets: curl + raw malformed requests, Host/Origin, a client sending one byte per second, SIGTERM shutdown |
 | cli_smoke | passed | end-to-end CLI: load, index, explain, errors, piped REPL, multi-line SQL, `timing`, `quit` |
 
 ## 2. CI (GitHub Actions, same commit)
@@ -106,6 +110,39 @@ pre-PR build at the time).
 - Debug (`-O0`) ASan builds made the randomized tests exceed CTest's
   timeout. Sanitized builds now use `-O1`.
 
+## Browser demo (PR #6)
+
+Run on the `feature/http-demo` branch, 2026-11-02, on the same machine:
+
+- `ctest`: 10/10 targets pass, with the four browser-demo rows above added.
+  The build has zero warnings with `-Werror`.
+- `tests/http_smoke_test.sh build/minisql_server`: passes in about 6 s,
+  most of it waiting out the stalled-client timeout.
+- Manually in a browser (desktop and a 375 px phone viewport, light and
+  dark): the example queries, the error caret, table links, `Reset`, and
+  the benchmark chart. The chart's run returned matching answers on both
+  tables, with medians of 0.863 → 0.004 ms for `id = 50007`, 1.11 → 0.337
+  ms for `city = 'Denver'`, and 0.876 → 0.105 ms for `city = 'Denver' AND
+  age >= 75`.
+
+Linux, sanitizer and Docker results for this change are in the PR's CI checks.
+
+**Independent review.** A separate review of the PR found eight issues,
+all fixed before merge. The biggest: a client sending one byte at a time
+could stall the single-threaded server for hours (the reviewer measured
+17 s for a health check). The new smoke check fails on the old code
+(14 s) and passes now (~5 s). The others: JSON responses that could
+contain invalid UTF-8, no Host/Origin check, early error responses that
+could be lost, a lenient JSON parser, NUL-truncated messages, accept-loop
+edge cases, and test gaps.
+
+**Local timing caveat.** On this Mac the slow-client check sometimes
+failed because the machine itself was paused. A watchdog in a
+diagnostic run saw 1-second sleeps take 23–394 s at exactly those
+moments. Every unpaused run answered in 4.95 s. CI runners don't pause,
+so CI is the reference for this timing check.
+
 ## Not covered
 
-- The optional HTTP/browser demo (spec §8) is not built yet, so it has no tests.
+- Load testing the demo server. It handles one connection at a time by
+  design (see DESIGN.md).

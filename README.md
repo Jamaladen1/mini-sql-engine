@@ -28,6 +28,7 @@ SQL ─► Lexer ─► Parser ─► AST ─► Validator ─► Planner ─►
 - Two column types: `INT64` and `TEXT`, declared up front. No guessing.
 - Single-column hash indexes. The planner uses one for an `=` predicate on an indexed column.
 - Clear errors with byte offsets (SQL) or line numbers (CSV). Bad input never crashes the process.
+- A REPL, a benchmark tool, and a [browser demo](#browser-demo) with a JSON API.
 
 Not supported on purpose: JOIN, GROUP BY, aggregates, OR/NOT, NULL,
 INSERT/UPDATE/DELETE, transactions, persistence. These words are rejected
@@ -50,9 +51,11 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
-Tests: `parser_tests`, `csv_tests`, `execution_tests`, `index_tests` (unit and
-integration, using a tiny built-in test harness), `fuzz_tests`, and
-`cli_smoke`, an end-to-end shell test of the CLI binary.
+Tests: `parser_tests`, `csv_tests`, `execution_tests`, `index_tests`,
+`json_tests` (unit and integration, using a tiny built-in test harness),
+`fuzz_tests`, `http_tests` and `api_tests` for the demo server, plus two
+end-to-end shell tests: `cli_smoke` (CLI binary) and `http_smoke` (the
+server over real sockets; runs when `curl` is installed).
 
 `fuzz_tests` uses fixed seeds. It feeds tens of thousands of random and
 mutated SQL, CSV and schema inputs through the engine, checking that the
@@ -216,6 +219,49 @@ python3 scripts/generate_data.py --rows 100000 --out data/users_100k.csv
 ./build/minisql -e "load users data/users_100k.csv --schema data/users.schema.json" -e "SELECT * FROM users WHERE id = 50007" -e "index users id" -e "SELECT * FROM users WHERE id = 50007"
 ```
 
+## Browser demo
+
+A small web page for trying the engine without installing anything else:
+write queries, see the `EXPLAIN` plan, and chart a full scan against a hash
+index on 100,000 rows.
+
+```bash
+./build/minisql_server
+```
+
+Then open http://127.0.0.1:8080. Options: `--port N`, `--host IPV4`
+(default `127.0.0.1`), `--data DIR`, `--web DIR`, and `--allow-host
+NAME[:PORT]` (repeatable). On `127.0.0.1` the server only answers to the
+`Host` names `127.0.0.1:<port>` and `localhost:<port>`. On any other
+address it accepts the `--allow-host` names, or any name if none are
+given.
+
+The server loads three tables at startup:
+
+| Table | Rows | Indexes |
+|---|---:|---|
+| `users` | 20 | `id` |
+| `users_100k` | 100,000 | none |
+| `users_100k_indexed` | 100,000 (same rows) | `id`, `city` |
+
+Its JSON API is usable on its own:
+
+```bash
+curl -s -H 'Content-Type: application/json' -d '{"sql":"SELECT * FROM users_100k_indexed WHERE id = 7"}' http://127.0.0.1:8080/api/query
+```
+
+| Endpoint | Does |
+|---|---|
+| `GET /health` | `{"status":"ok"}` |
+| `GET /api/tables` | tables, row counts, columns, types, indexes |
+| `POST /api/query` | `{"sql": "..."}` → columns, rows (max 500), total row count, plan, access path, time |
+| `POST /api/explain` | `{"sql": "..."}` → plan and access path only |
+| `POST /api/load-sample` | reset to the bundled datasets |
+
+Errors come back as `{"error": {"kind", "message", "position"}}` with
+status 400. Every POST must send `Content-Type: application/json`. The server only reads its bundled data, never a path from a
+request. See [DESIGN.md](DESIGN.md#browser-demo-server) for the limits.
+
 ## Docker
 
 The image build compiles the project and runs the full test suite.
@@ -232,17 +278,30 @@ docker run --rm -it minisql
 docker run --rm minisql minisql_bench
 ```
 
+Browser demo, then open http://127.0.0.1:8080:
+
+```bash
+docker run --rm -p 8080:8080 minisql minisql_server --host 0.0.0.0 --allow-host localhost --allow-host 127.0.0.1
+```
+
+`--host 0.0.0.0` is needed inside the container so Docker can forward the
+port. The `--allow-host` names keep the `Host` check on (it blocks DNS
+rebinding) for http://localhost:8080 and http://127.0.0.1:8080. Outside
+Docker, keep the default `127.0.0.1` unless you mean to expose the server.
+
 The sample data is in `/app/data` inside the container, so
 `load users data/users.csv --schema data/users.schema.json` works as is.
 
 ## Project layout
 
 ```
-include/minisql/   public headers (value, catalog, csv, lexer, ast, parser,
+include/minisql/   public headers (value, catalog, csv, json, lexer, ast, parser,
                    validator, planner, executor, engine, datagen, error)
 src/               engine implementation (the minisql_core library)
-apps/              minisql_cli.cpp (REPL), minisql_bench.cpp
-tests/             unit/integration tests + CLI smoke test
+apps/              minisql_cli.cpp (REPL), minisql_bench.cpp, minisql_server.cpp
+apps/server/       demo HTTP server and JSON API (the minisql_http library)
+web/               browser demo page (HTML, CSS, JS; no dependencies)
+tests/             unit/integration tests, CLI and HTTP smoke tests
 data/              sample CSV, schema, demo script
 scripts/           data generator, sanitizer scripts
 ```

@@ -30,6 +30,7 @@ add_library(minisql_core
   src/value.cpp
   src/catalog.cpp
   src/csv.cpp
+  src/json.cpp
   src/lexer.cpp
   src/parser.cpp
   src/validator.cpp
@@ -50,16 +51,47 @@ add_executable(minisql_bench apps/minisql_bench.cpp)
 target_link_libraries(minisql_bench PRIVATE minisql_core)
 target_compile_options(minisql_bench PRIVATE ${MINISQL_WARNINGS})
 
+# ---- demo HTTP server (outside the engine core, see spec section 8) ----
+add_library(minisql_http
+  apps/server/http.cpp
+  apps/server/http_socket.cpp
+  apps/server/api.cpp
+)
+target_include_directories(minisql_http PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/apps/server)
+target_link_libraries(minisql_http PUBLIC minisql_core)
+target_compile_options(minisql_http PRIVATE ${MINISQL_WARNINGS})
+
+add_executable(minisql_server apps/minisql_server.cpp)
+target_link_libraries(minisql_server PRIVATE minisql_http)
+target_compile_options(minisql_server PRIVATE ${MINISQL_WARNINGS})
+
 # ---- tests ----
 if(MINISQL_BUILD_TESTS)
   enable_testing()
-  foreach(t parser_tests csv_tests execution_tests index_tests fuzz_tests)
+  foreach(t parser_tests csv_tests execution_tests index_tests fuzz_tests json_tests)
     add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE minisql_core)
     target_compile_options(${t} PRIVATE ${MINISQL_WARNINGS})
     target_compile_definitions(${t} PRIVATE MINISQL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     add_test(NAME ${t} COMMAND ${t})
   endforeach()
+
+  foreach(t http_tests api_tests)
+    add_executable(${t} tests/${t}.cpp)
+    target_link_libraries(${t} PRIVATE minisql_http)
+    target_compile_options(${t} PRIVATE ${MINISQL_WARNINGS})
+    target_compile_definitions(${t} PRIVATE MINISQL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME ${t} COMMAND ${t})
+  endforeach()
+
+  find_program(CURL_EXECUTABLE curl)
+  if(CURL_EXECUTABLE)
+    add_test(NAME http_smoke
+      COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/http_smoke_test.sh $<TARGET_FILE:minisql_server>
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+  else()
+    message(STATUS "curl not found: skipping the http_smoke test")
+  endif()
 
   add_test(NAME cli_smoke
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_smoke_test.sh $<TARGET_FILE:minisql>

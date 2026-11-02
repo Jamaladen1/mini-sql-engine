@@ -66,6 +66,9 @@ TEST(lexer_operators) {
 TEST(lexer_errors_have_positions) {
     CHECK_THROWS_WITH(tokenize("SELECT 'abc"), "at position 7: unterminated string");
     CHECK_THROWS_WITH(tokenize("SELECT @"), "at position 7: unexpected character '@'");
+    CHECK_THROWS_WITH(tokenize("SELECT \xC3\xA9"), "at position 7: unexpected byte 0xC3 (only ASCII");
+    CHECK_THROWS_WITH(tokenize(std::string("SELECT \0", 8)), "at position 7: unexpected byte 0x00");
+    CHECK_THROWS_WITH(tokenize("SELECT \x01"), "unexpected byte 0x01");
     CHECK_THROWS_WITH(tokenize("a <> b"), "'<>' is not supported");
     CHECK_THROWS_WITH(tokenize("LIMIT 10abc"), "malformed number");
     CHECK_THROWS_WITH(tokenize("x = \"str\""), "double-quoted");

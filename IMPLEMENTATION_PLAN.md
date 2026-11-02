@@ -31,7 +31,7 @@ the build and tests were run after each.
 | ASan / UBSan (§9) | `MINISQL_SANITIZE` option (`-O1`), `scripts/run_sanitizers*.sh` | CI `sanitizers` job; UBSan in CI `macos` job |
 | Dockerfile (§2) | `Dockerfile` (build stage runs ctest) | `docker build` |
 | README, DESIGN, sample data, example queries (§2, §7) | `README.md`, `DESIGN.md`, `data/` | README commands run verbatim (TEST_REPORT.md) |
-| Optional HTTP demo (§8) | **Not implemented yet** (stretch goal; next) | n/a |
+| Optional HTTP demo (§8) | `apps/server/` (`http.cpp`, `http_socket.cpp`, `api.cpp`), `apps/minisql_server.cpp`, `web/` | `http_tests`, `api_tests`, `json_tests`, `http_smoke`; CI docker job queries the server in the container |
 
 ## Interpretations of ambiguous points
 
@@ -59,4 +59,6 @@ Each item was its own pull request, reviewed and merged into `main`.
 | [#1](https://github.com/Jamaladen1/mini-sql-engine/pull/1) | Stream candidates through the filter. Stop early on `LIMIT` without `ORDER BY`. `EXPLAIN` shows it | `src/executor.cpp`, `src/planner.cpp` | `execution_tests`: `limit_*`, `early_exit_*`; `index_tests`: rows examined |
 | [#2](https://github.com/Jamaladen1/mini-sql-engine/pull/2) | REPL: multi-line SQL ending at `;`, `timing on/off`, `quit` always works | `apps/minisql_cli.cpp` | `cli_smoke` |
 | [#3](https://github.com/Jamaladen1/mini-sql-engine/pull/3) | CI: macOS job, benchmark job with summary and artifact, no duplicate runs, timeouts | `.github/workflows/ci.yml` | the CI run itself |
+| [#5](https://github.com/Jamaladen1/mini-sql-engine/pull/5) | Docs: test report and plan brought up to date | `TEST_REPORT.md`, `IMPLEMENTATION_PLAN.md` | n/a |
+| [#6](https://github.com/Jamaladen1/mini-sql-engine/pull/6) | Browser demo: HTTP server, JSON API, web page, benchmark chart | `apps/server/`, `apps/minisql_server.cpp`, `web/`, `src/json.cpp` | `json_tests`, `http_tests`, `api_tests`, `http_smoke` |
 | [#4](https://github.com/Jamaladen1/mini-sql-engine/pull/4) | Randomized robustness and reference-comparison tests. Test filter and per-test timing | `tests/fuzz_tests.cpp`, `tests/test_framework.hpp` | `fuzz_tests` |

@@ -33,6 +33,7 @@ QueryOutcome Engine::run(std::string_view sql) const {
     QueryOutcome out;
     out.explain = stmt.explain;
     out.planText = explainPlan(p);
+    out.access = p.access;
     if (!stmt.explain) out.result = execute(p);
     const auto end = std::chrono::steady_clock::now();
     out.elapsedMs = std::chrono::duration<double, std::milli>(end - start).count();
