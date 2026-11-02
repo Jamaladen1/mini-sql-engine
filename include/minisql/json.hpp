@@ -32,9 +32,9 @@ struct Json {
 // minisql::Error of `errorKind` with the byte offset on bad input.
 Json parseJson(std::string_view text, ErrorKind errorKind = ErrorKind::Schema);
 
-// Returns `text` as a quoted JSON string literal. Bytes are passed through
-// as-is (UTF-8 is not validated); control characters and <, >, & are
-// written as \\u escapes.
+// Returns `text` as a quoted JSON string literal. Valid UTF-8 passes
+// through; invalid bytes become U+FFFD, so the result is always valid
+// UTF-8. Control characters and <, >, & are written as \u escapes.
 std::string jsonQuote(std::string_view text);
 
 }  // namespace minisql

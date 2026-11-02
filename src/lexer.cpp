@@ -182,7 +182,19 @@ std::vector<Token> tokenize(std::string_view sql) {
                             start);
             default: break;
         }
-        throw Error(ErrorKind::Syntax, std::string("unexpected character '") + c + "'", start);
+        // Show printable ASCII as-is; name anything else by its byte value
+        // so messages never contain raw control bytes or half of a UTF-8
+        // character.
+        const auto byte = static_cast<unsigned char>(c);
+        if (byte > 0x20 && byte < 0x7F) {
+            throw Error(ErrorKind::Syntax, std::string("unexpected character '") + c + "'", start);
+        }
+        static const char* kHex = "0123456789ABCDEF";
+        const std::string hex{'0', 'x', kHex[byte >> 4], kHex[byte & 0xF]};
+        throw Error(ErrorKind::Syntax,
+                    "unexpected byte " + hex +
+                        (byte >= 0x80 ? " (only ASCII is allowed outside string literals)" : ""),
+                    start);
     }
     tokens.push_back({TokenType::End, "", n});
     return tokens;

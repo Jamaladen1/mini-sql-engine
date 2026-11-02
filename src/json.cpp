@@ -52,6 +52,9 @@ private:
                 std::string key = parseString();
                 expect(':');
                 Json member = parseValue(depth + 1);
+                for (const auto& existing : v.keys) {
+                    if (existing == key) fail("duplicate key \"" + key + "\"");
+                }
                 v.keys.push_back(std::move(key));
                 v.values.push_back(std::move(member));
                 skipWs();
@@ -80,11 +83,7 @@ private:
         }
         if (c == '-' || (c >= '0' && c <= '9')) {
             v.kind = Json::Kind::Number;
-            while (i_ < s_.size() && (s_[i_] == '-' || s_[i_] == '+' || s_[i_] == '.' ||
-                                      s_[i_] == 'e' || s_[i_] == 'E' ||
-                                      (s_[i_] >= '0' && s_[i_] <= '9'))) {
-                v.str.push_back(s_[i_++]);
-            }
+            v.str = parseNumber();
             return v;
         }
         for (auto [word, kind] : {std::pair{"true", Json::Kind::Bool},
@@ -99,6 +98,32 @@ private:
             }
         }
         fail("unexpected character");
+    }
+
+    // number = [ "-" ] int [ frac ] [ exp ]   (RFC 8259)
+    std::string parseNumber() {
+        const std::size_t start = i_;
+        auto digit = [this] { return i_ < s_.size() && s_[i_] >= '0' && s_[i_] <= '9'; };
+        auto digits = [&] {
+            if (!digit()) fail("invalid number");
+            while (digit()) ++i_;
+        };
+        if (s_[i_] == '-') ++i_;
+        if (i_ < s_.size() && s_[i_] == '0') {
+            ++i_;  // no leading zeros
+        } else {
+            digits();
+        }
+        if (i_ < s_.size() && s_[i_] == '.') {
+            ++i_;
+            digits();
+        }
+        if (i_ < s_.size() && (s_[i_] == 'e' || s_[i_] == 'E')) {
+            ++i_;
+            if (i_ < s_.size() && (s_[i_] == '+' || s_[i_] == '-')) ++i_;
+            digits();
+        }
+        return std::string(s_.substr(start, i_ - start));
     }
 
     std::string parseString() {
@@ -123,6 +148,9 @@ private:
                     case 'u': appendUtf8(out, parseUnicodeEscape()); break;
                     default: fail("unsupported escape sequence");
                 }
+            } else if (static_cast<unsigned char>(c) < 0x20) {
+                --i_;
+                fail("unescaped control character in string");
             } else {
                 out.push_back(c);
             }
@@ -187,13 +215,55 @@ Json parseJson(std::string_view text, ErrorKind errorKind) {
     return JsonParser(text, errorKind).parseDocument();
 }
 
+namespace {
+
+// Length of the valid UTF-8 sequence starting at text[i], or 0 if the
+// bytes there are not valid UTF-8 (bad lead byte, missing continuation,
+// overlong form, UTF-16 surrogate, or above U+10FFFF).
+std::size_t utf8SequenceLength(std::string_view text, std::size_t i) {
+    const auto b0 = static_cast<unsigned char>(text[i]);
+    std::size_t len = 0;
+    unsigned char lo = 0x80, hi = 0xBF;  // allowed range for the 2nd byte
+    if (b0 >= 0xC2 && b0 <= 0xDF) len = 2;
+    else if (b0 == 0xE0) { len = 3; lo = 0xA0; }
+    else if (b0 == 0xED) { len = 3; hi = 0x9F; }
+    else if (b0 >= 0xE1 && b0 <= 0xEF) len = 3;
+    else if (b0 == 0xF0) { len = 4; lo = 0x90; }
+    else if (b0 >= 0xF1 && b0 <= 0xF3) len = 4;
+    else if (b0 == 0xF4) { len = 4; hi = 0x8F; }
+    else return 0;
+    if (text.size() - i < len) return 0;
+    for (std::size_t k = 1; k < len; ++k) {
+        const auto b = static_cast<unsigned char>(text[i + k]);
+        const unsigned char min = (k == 1) ? lo : 0x80;
+        const unsigned char max = (k == 1) ? hi : 0xBF;
+        if (b < min || b > max) return 0;
+    }
+    return len;
+}
+
+}  // namespace
+
 std::string jsonQuote(std::string_view text) {
     static const char* kHex = "0123456789abcdef";
     std::string out;
     out.reserve(text.size() + 2);
     out.push_back('"');
-    for (char ch : text) {
-        const auto c = static_cast<unsigned char>(ch);
+    for (std::size_t i = 0; i < text.size();) {
+        const auto c = static_cast<unsigned char>(text[i]);
+        if (c >= 0x80) {
+            // Copy valid UTF-8 through; replace each invalid byte with
+            // U+FFFD so the output is always valid UTF-8 (and valid JSON).
+            const std::size_t len = utf8SequenceLength(text, i);
+            if (len == 0) {
+                out += "\xEF\xBF\xBD";
+                ++i;
+            } else {
+                out.append(text.substr(i, len));
+                i += len;
+            }
+            continue;
+        }
         switch (c) {
             case '"': out += "\\\""; break;
             case '\\': out += "\\\\"; break;
@@ -213,9 +283,10 @@ std::string jsonQuote(std::string_view text) {
                     out.push_back(kHex[c >> 4]);
                     out.push_back(kHex[c & 0xF]);
                 } else {
-                    out.push_back(ch);
+                    out.push_back(static_cast<char>(c));
                 }
         }
+        ++i;
     }
     out.push_back('"');
     return out;
