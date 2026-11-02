@@ -1,20 +1,26 @@
 // POSIX socket loop for the demo server. Single-threaded: connections are
-// handled one at a time, each bounded by the I/O timeout and size limits,
-// so one slow client can delay others by at most a few seconds.
+// handled one at a time. Each connection gets one absolute deadline for
+// the whole exchange (read request, run handler, write response), so a
+// client that trickles bytes slowly can hold the server for at most
+// ServerOptions::requestTimeoutSeconds, not per byte.
 
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <sys/socket.h>
-#include <sys/time.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <csignal>
 #include <cstdint>
 #include <cstring>
 #include <exception>
 #include <iostream>
 #include <string>
+#include <thread>
 
 #include "http.hpp"
 #include "minisql/json.hpp"
@@ -22,6 +28,8 @@
 namespace minisql::http {
 
 namespace {
+
+using Clock = std::chrono::steady_clock;
 
 volatile std::sig_atomic_t gStop = 0;
 
@@ -42,18 +50,29 @@ private:
     int fd_;
 };
 
-void setTimeouts(int fd, int seconds) {
-    timeval tv{};
-    tv.tv_sec = seconds;
-    ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
-    ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+void configureClientSocket(int fd) {
+    const int flags = ::fcntl(fd, F_GETFL, 0);
+    if (flags >= 0) ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 #ifdef SO_NOSIGPIPE
     int one = 1;
     ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
 #endif
 }
 
-bool sendAll(int fd, const std::string& data) {
+// Waits until `fd` is ready for `events` or the deadline passes.
+bool waitFor(int fd, short events, Clock::time_point deadline) {
+    while (true) {
+        const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now());
+        if (left.count() <= 0) return false;
+        pollfd p{fd, events, 0};
+        const int r = ::poll(&p, 1, static_cast<int>(left.count()));
+        if (r > 0) return true;
+        if (r == 0) return false;
+        if (errno != EINTR) return false;
+    }
+}
+
+bool sendAll(int fd, const std::string& data, Clock::time_point deadline) {
     std::size_t sent = 0;
     while (sent < data.size()) {
 #ifdef MSG_NOSIGNAL
@@ -61,11 +80,33 @@ bool sendAll(int fd, const std::string& data) {
 #else
         const ssize_t n = ::send(fd, data.data() + sent, data.size() - sent, 0);
 #endif
+        if (n > 0) {
+            sent += static_cast<std::size_t>(n);
+            continue;
+        }
         if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) return false;
-        sent += static_cast<std::size_t>(n);
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && waitFor(fd, POLLOUT, deadline)) {
+            continue;
+        }
+        return false;
     }
     return true;
+}
+
+// Ends the connection without discarding the response: stop sending,
+// then briefly read and drop whatever the client still sends (e.g. a body
+// we rejected before reading it). Closing with unread input makes some
+// kernels send a TCP reset, which can destroy the response in flight.
+void closeGracefully(int fd) {
+    ::shutdown(fd, SHUT_WR);
+    const auto deadline = Clock::now() + std::chrono::milliseconds(500);
+    char buf[4096];
+    std::size_t drained = 0;
+    while (drained < 64 * 1024 && waitFor(fd, POLLIN, deadline)) {
+        const ssize_t n = ::recv(fd, buf, sizeof buf, 0);
+        if (n <= 0) break;
+        drained += static_cast<std::size_t>(n);
+    }
 }
 
 Response errorResponse(int status, const std::string& message) {
@@ -77,27 +118,29 @@ Response errorResponse(int status, const std::string& message) {
 }
 
 void handleConnection(int fd, const ServerOptions& options, const Handler& handler) {
-    setTimeouts(fd, options.ioTimeoutSeconds);
+    configureClientSocket(fd);
+    const auto deadline = Clock::now() + std::chrono::seconds(options.requestTimeoutSeconds);
     std::string received;
     char buf[4096];
     ParseResult parsed;
+    bool timedOut = false;
     while (true) {
-        const ssize_t n = ::recv(fd, buf, sizeof buf, 0);
-        if (n < 0 && errno == EINTR && !gStop) continue;
-        if (n < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                sendAll(fd, serializeResponse(errorResponse(408, "request timed out")));
-            }
-            return;
+        if (!waitFor(fd, POLLIN, deadline)) {
+            timedOut = true;
+            break;
         }
-        if (n == 0) return;  // client closed before sending a full request
+        const ssize_t n = ::recv(fd, buf, sizeof buf, 0);
+        if (n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
+        if (n <= 0) return;  // error, or client closed before a full request
         received.append(buf, static_cast<std::size_t>(n));
         parsed = parseRequest(received, options.limits);
         if (parsed.status != ParseStatus::Incomplete) break;
     }
 
     Response response;
-    if (parsed.status == ParseStatus::Invalid) {
+    if (timedOut) {
+        response = errorResponse(408, "request not received in time");
+    } else if (parsed.status == ParseStatus::Invalid) {
         response = errorResponse(parsed.errorStatus, parsed.errorMessage);
     } else {
         try {
@@ -107,10 +150,14 @@ void handleConnection(int fd, const ServerOptions& options, const Handler& handl
             response = errorResponse(500, "internal error");
         }
     }
-    sendAll(fd, serializeResponse(response));
-    std::cerr << (parsed.status == ParseStatus::Complete ? parsed.request.method : "-") << ' '
-              << (parsed.status == ParseStatus::Complete ? parsed.request.path : "-") << ' '
-              << response.status << '\n';
+    // Allow the response a short grace period even if reading used up the
+    // deadline, so a 408 still reaches the client.
+    sendAll(fd, serializeResponse(response),
+            std::max(deadline, Clock::now() + std::chrono::seconds(1)));
+    closeGracefully(fd);
+    const bool ok = parsed.status == ParseStatus::Complete;
+    std::cerr << (ok ? parsed.request.method : "-") << ' ' << (ok ? parsed.request.path : "-")
+              << ' ' << response.status << '\n';
 }
 
 }  // namespace
@@ -120,7 +167,7 @@ int serve(const ServerOptions& options, const Handler& handler) {
     struct sigaction sa {};
     sa.sa_handler = onStopSignal;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;  // no SA_RESTART: accept() must return EINTR on Ctrl-C
+    sa.sa_flags = 0;
     sigaction(SIGINT, &sa, nullptr);
     sigaction(SIGTERM, &sa, nullptr);
 
@@ -152,10 +199,17 @@ int serve(const ServerOptions& options, const Handler& handler) {
               << "/\n";
 
     while (!gStop) {
+        // Wake up regularly so a stop signal is never missed while idle.
+        pollfd p{listener.get(), POLLIN, 0};
+        const int ready = ::poll(&p, 1, 500);
+        if (ready <= 0) continue;  // timeout or EINTR: re-check gStop
         const int client = ::accept(listener.get(), nullptr, nullptr);
         if (client < 0) {
-            if (errno == EINTR) continue;
-            std::cerr << "accept: " << std::strerror(errno) << "\n";
+            if (errno != EINTR && errno != EAGAIN && errno != ECONNABORTED) {
+                // e.g. EMFILE: back off instead of spinning on the error.
+                std::cerr << "accept: " << std::strerror(errno) << "\n";
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
             continue;
         }
         Fd conn(client);

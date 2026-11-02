@@ -48,8 +48,23 @@ big=$(head -c 20000 /dev/zero | tr '\0' 'a')
 raw() { exec 3<>"/dev/tcp/127.0.0.1/$PORT"; printf '%b' "$1" >&3; cat <&3; exec 3<&-; }
 raw 'GARBAGE\r\n\r\n' | head -1 | grep -q "400"                                   || fail "garbage request -> 400"
 raw 'POST /api/query HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n' | head -1 | grep -q "501" || fail "chunked -> 501"
-raw 'GET / HTTP/1.1\r\n' >/dev/null &   # incomplete request: server must time out, not hang
 curl -sf --max-time 10 "$BASE/health" | grep -q ok || fail "server stopped answering after bad requests"
+
+# Slow client: one byte per second, never finishing the request. The
+# server allows each connection 5 s in total, so another client must get
+# an answer within about that, not after the slow client gives up.
+(
+  exec 3<>"/dev/tcp/127.0.0.1/$PORT"
+  for c in G E T ' ' / ' ' H T T P / 1 . 1; do printf '%s' "$c" >&3 2>/dev/null || break; sleep 1; done
+  exec 3<&-
+) &
+TRICKLE=$!
+sleep 0.5   # let the slow client connect first
+start=$(date +%s)
+curl -sf --max-time 20 "$BASE/health" | grep -q ok || fail "health check behind a slow client"
+waited=$(( $(date +%s) - start ))
+kill "$TRICKLE" 2>/dev/null || true; wait "$TRICKLE" 2>/dev/null || true
+[ "$waited" -le 7 ] || fail "slow client held the server for ${waited}s (limit is 5s per connection)"
 
 # Clean shutdown on SIGTERM.
 kill -TERM "$PID"

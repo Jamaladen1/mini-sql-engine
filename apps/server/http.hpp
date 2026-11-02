@@ -61,7 +61,9 @@ using Handler = std::function<Response(const Request&)>;
 struct ServerOptions {
     std::string host = "127.0.0.1";  // IPv4 address to bind
     int port = 8080;
-    int ioTimeoutSeconds = 5;        // per read/write on a connection
+    // Total time allowed per connection (receive request, run the query,
+    // send the response). One slow client delays others by at most this.
+    int requestTimeoutSeconds = 5;
     Limits limits;
 };
 
