@@ -24,7 +24,7 @@ the build and tests were run after each.
 | EXPLAIN (§2, §6) | `src/planner.cpp` (`explainPlan`) | `execution_tests`: `explain_does_not_execute_and_shows_plan`; `index_tests`: `explain_shows_index_lookup_and_residual`; `cli_smoke` |
 | CLI: load, create-index, query, explain, tables, schema, quit (§2, §7) | `apps/minisql_cli.cpp` | `tests/cli_smoke_test.sh` |
 | Errors never crash the process (§2, §9) | `apps/minisql_cli.cpp` (catch per command) | `cli_smoke` (error section) |
-| Malformed SQL/CSV give controlled errors, no UB (§9) | every stage throws `minisql::Error` | `fuzz_tests`: 80k random/mutated inputs, run under ASan + UBSan in CI |
+| Malformed SQL/CSV give controlled errors, no UB (§9) | every stage throws `minisql::Error` | `fuzz_tests`: 85k random/mutated inputs, run under ASan + UBSan in CI |
 | Timing with `steady_clock` (§6) | `src/engine.cpp`, `apps/minisql_bench.cpp` | manual run (see TEST_REPORT.md) |
 | Benchmark: 10k/100k, warm-up, ≥20 iterations, median, parity (§2, §10) | `apps/minisql_bench.cpp`, `src/datagen.cpp`, `scripts/generate_data.py` | `minisql_bench` exits nonzero on mismatch; run in CI |
 | CMake, warnings `-Wall -Wextra -Wpedantic` (§2, §9) | `CMakeLists.txt` (`MINISQL_WERROR` turns warnings into errors) | every build |

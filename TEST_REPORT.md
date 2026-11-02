@@ -25,7 +25,7 @@ Clean build with zero warnings (`-Wall -Wextra -Wpedantic -Wshadow
 | csv_tests | 17/17 | quoting, CRLF, empty strings, bad/overflowing integers, headers, schema JSON |
 | execution_tests | 21/21 | golden results for every operator, AND, ORDER BY ties, LIMIT, LIMIT early exit, errors, EXPLAIN |
 | index_tests | 12/12 | index vs full-scan parity, duplicate/missing keys, planner choice, rows examined |
-| fuzz_tests | 10/10 | 80k random/mutated SQL, CSV and JSON inputs; random queries vs a reference implementation |
+| fuzz_tests | 10/10 | 85k random/mutated SQL, CSV and JSON inputs; random queries vs a reference implementation |
 | cli_smoke | passed | end-to-end CLI: load, index, explain, errors, piped REPL, multi-line SQL, `timing`, `quit` |
 
 ## 2. CI (GitHub Actions, same commit)
