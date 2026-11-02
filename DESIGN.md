@@ -171,9 +171,12 @@ browser ── HTTP ──► http_socket.cpp ─► http.cpp ─► api.cpp ─
   headers, header line folding and bytes after the body are rejected
   (400). The parser is a pure function, so it's unit-tested without
   sockets.
-- **Concurrency.** One connection at a time. Every read and write has a
-  5 s timeout, so a slow or stalled client delays others by at most that.
-  This is fine for a demo; it's not built for heavy traffic.
+- **Concurrency.** One connection at a time. Each connection gets one 5 s
+  deadline for the whole exchange, enforced with `poll()` before every
+  read and write. A slow or stalled client, even one sending a byte at a
+  time, delays others by at most that. Connections close gracefully
+  (`shutdown`, then a brief drain), so an early 413 or 400 isn't lost to a
+  TCP reset. Fine for a demo; not built for heavy traffic.
 - **Limits.** Headers 8 KiB, body 16 KiB, SQL 4 KiB, 500 result rows per
   response (the total count is still reported). Query time is bounded by
   the data: the largest table has 100,000 rows, and every query is at
@@ -182,14 +185,24 @@ browser ── HTTP ──► http_socket.cpp ─► http.cpp ─► api.cpp ─
   the deterministic generator. Static files are a fixed list read once at
   startup and served by exact path match, so path traversal has nothing to
   reach.
-- **Binding.** `127.0.0.1` by default. `0.0.0.0` must be requested
-  explicitly (Docker needs it).
+- **Binding and Host.** `127.0.0.1` by default. `0.0.0.0` must be
+  requested explicitly (Docker needs it). On `127.0.0.1` only `Host:
+  127.0.0.1:<port>` or `localhost:<port>` is answered (403 otherwise),
+  which blocks DNS rebinding. `--allow-host` adds names for other setups.
+- **Cross-site requests.** Every POST must be `application/json` (415
+  otherwise), which a browser can't send cross-origin without a CORS
+  preflight that this server never approves. A foreign `Origin` header
+  gets 403 when a Host list is set.
 - **Browser safety.** Responses send `Content-Security-Policy:
   default-src 'self'`, `nosniff` and `no-store`. The page uses no inline
   scripts or outside resources, and inserts every server value as text,
   never HTML. `jsonQuote` also escapes `<`, `>` and `&`.
 - **Numbers.** INT64 values outside ±2^53 are sent as JSON strings, so
   JavaScript never shows a silently rounded number.
+- **Valid UTF-8.** `jsonQuote` replaces any invalid UTF-8 byte with
+  U+FFFD, so responses are always valid JSON even if CSV data contains
+  invalid bytes. The lexer names unexpected non-ASCII bytes by value
+  (`unexpected byte 0xC3`) rather than quoting half a character.
 - **Errors.** Every `minisql::Error` becomes a 400 with `kind`, `message`
   and the byte `position`. The page turns that into a caret under the
   failing spot.

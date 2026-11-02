@@ -26,10 +26,10 @@ Clean build with zero warnings (`-Wall -Wextra -Wpedantic -Wshadow
 | execution_tests | 21/21 | golden results for every operator, AND, ORDER BY ties, LIMIT, LIMIT early exit, errors, EXPLAIN |
 | index_tests | 12/12 | index vs full-scan parity, duplicate/missing keys, planner choice, rows examined |
 | fuzz_tests | 10/10 | 85k random/mutated SQL, CSV and JSON inputs; random queries vs a reference implementation |
-| json_tests | 7/7 | JSON parsing, `\u` escapes and surrogate pairs, `jsonQuote`, round trips (added with the browser demo) |
-| http_tests | 10/10 | HTTP request parser limits and rejections, response writer (browser demo) |
-| api_tests | 12/12 | every API endpoint, errors, limits, truncation, static files (browser demo) |
-| http_smoke | passed | real server over sockets: curl + raw malformed requests, stalled client, SIGTERM shutdown (browser demo) |
+| json_tests | 12/12 | strict JSON parsing, `\u` escapes and surrogates, `jsonQuote` always valid UTF-8 (checked by an independent validator on all bytes and 5000 random strings) |
+| http_tests | 10/10 | HTTP request parser limits and rejections, response writer |
+| api_tests | 16/16 | every API endpoint, errors, limits, truncation, static files, Host/Origin checks, 2^53 boundary |
+| http_smoke | passed | real server over sockets: curl + raw malformed requests, Host/Origin, a client sending one byte per second, SIGTERM shutdown |
 | cli_smoke | passed | end-to-end CLI: load, index, explain, errors, piped REPL, multi-line SQL, `timing`, `quit` |
 
 ## 2. CI (GitHub Actions, same commit)
@@ -126,6 +126,21 @@ Run on the `feature/http-demo` branch, 2026-11-02, on the same machine:
   age >= 75`.
 
 Linux, sanitizer and Docker results for this change are in the PR's CI checks.
+
+**Independent review.** A separate review of the PR found eight issues,
+all fixed before merge. The biggest: a client sending one byte at a time
+could stall the single-threaded server for hours (the reviewer measured
+17 s for a health check). The new smoke check fails on the old code
+(14 s) and passes now (~5 s). The others: JSON responses that could
+contain invalid UTF-8, no Host/Origin check, early error responses that
+could be lost, a lenient JSON parser, NUL-truncated messages, accept-loop
+edge cases, and test gaps.
+
+**Local timing caveat.** On this Mac the slow-client check sometimes
+failed because the machine itself was paused. A watchdog in a
+diagnostic run saw 1-second sleeps take 23–394 s at exactly those
+moments. Every unpaused run answered in 4.95 s. CI runners don't pause,
+so CI is the reference for this timing check.
 
 ## Not covered
 

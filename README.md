@@ -230,7 +230,11 @@ index on 100,000 rows.
 ```
 
 Then open http://127.0.0.1:8080. Options: `--port N`, `--host IPV4`
-(default `127.0.0.1`), `--data DIR`, `--web DIR`.
+(default `127.0.0.1`), `--data DIR`, `--web DIR`, and `--allow-host
+NAME[:PORT]` (repeatable). On `127.0.0.1` the server only answers to the
+`Host` names `127.0.0.1:<port>` and `localhost:<port>`. On any other
+address it accepts the `--allow-host` names, or any name if none are
+given.
 
 The server loads three tables at startup:
 
@@ -255,7 +259,7 @@ curl -s -H 'Content-Type: application/json' -d '{"sql":"SELECT * FROM users_100k
 | `POST /api/load-sample` | reset to the bundled datasets |
 
 Errors come back as `{"error": {"kind", "message", "position"}}` with
-status 400. The server only reads its bundled data, never a path from a
+status 400. Every POST must send `Content-Type: application/json`. The server only reads its bundled data, never a path from a
 request. See [DESIGN.md](DESIGN.md#browser-demo-server) for the limits.
 
 ## Docker
